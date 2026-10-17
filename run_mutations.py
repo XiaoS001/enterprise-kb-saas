@@ -245,18 +245,52 @@ def apply_mutation(spec):
 
 
 def run_one(spec, backup_dir):
+    """跑单个变异。返回红数，或 None 表示变异无效。
+
+    🔴 **三层自检**（第三层是审查建议补的）：
+      1. 注入动作本身成功（模板匹配上了）
+      2. 源码里确实出现了 MUTANT 标记
+      3. **变异后的源码与原文必须不同，且能编译**
+
+    第 3 层为什么必要：变异⑭ 第一版只删了 `raise`，但 `if` 条件还在，
+    逻辑反而更严 —— 源码确实变了（MUTANT 标记也在），但**行为没变坏**，
+    于是「0 红」被误读成「测试太弱」。
+    注入不完整的变异会给出**假的安全感**，比不跑变异更危险。
+    """
+
     path = spec['file']
     pristine = backup_dir / path.name
     shutil.copy(pristine, path)
+
+    original_source = path.read_text(encoding='utf-8')
     applied, _ = apply_mutation(spec)
     if not applied:
         shutil.copy(pristine, path)
         return None
-    if 'MUTANT' not in path.read_text(encoding='utf-8'):
+
+    mutated_source = path.read_text(encoding='utf-8')
+
+    # 自检 2：标记在
+    if 'MUTANT' not in mutated_source:
         shutil.copy(pristine, path)
         return None
+
+    # 自检 3a：源码真的变了
+    if mutated_source == original_source:
+        shutil.copy(pristine, path)
+        return None
+
+    # 自检 3b：语法没被改坏（语法坏的变异跑出来全是 import error，
+    # 那一片红是假的 —— 不代表测试抓到了逻辑错误）
+    try:
+        compile(mutated_source, str(path), 'exec')
+    except SyntaxError:
+        shutil.copy(pristine, path)
+        return None
+
     output = run_tests()
     red = count_red(output)
+
     shutil.copy(pristine, path)
     return red
 

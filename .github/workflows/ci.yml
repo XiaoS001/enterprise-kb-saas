@@ -28,13 +28,15 @@ jobs:
           python -m pip install -r requirements.txt
 
       - name: 语法编译检查
-        run: python -m compileall -q app.py models.py config.py tenancy.py auth.py kb_api.py kb_search.py billing.py chunking.py
+        run: |
+          python -m compileall -q app.py models.py config.py tenancy.py auth.py \
+            kb_api.py kb_search.py billing.py chunking.py admin_api.py
 
       - name: 跑测试
-        # 🔴 -m 'not vector' 排除向量测试：那组会从 HuggingFace 下载模型，CI 上不该跑
+        # -m "not vector" 排除向量测试（会从 HuggingFace 下载模型，CI 上不该跑）
         run: python -m pytest tests -q -p no:warnings -m "not vector"
 
-      - name: 密钥扫描
+      - name: 密钥扫描（代码里不许有明文 key）
         run: |
           if grep -rnE "sk-[A-Za-z0-9]{16,}|api_key[[:space:]]*=[[:space:]]*['\"]" \
                --include='*.py' --include='*.yml' --include='*.json' \
@@ -42,14 +44,121 @@ jobs:
             echo "::error::检测到疑似明文密钥"
             exit 1
           fi
-          echo "未发现明文密钥"
+          echo "✅ 未发现明文密钥"
 
       - name: 业务库未被测试污染
         run: |
-          # .gitignore 已排除 *.db；这里再确认一次 —— 测试若写了业务库会被提交
           if git status --porcelain | grep -q '\.db$'; then
             echo "::error::测试写出了 .db 文件（应被 .gitignore 排除）"
             git status --porcelain | grep '\.db$'
             exit 1
           fi
-          echo "业务库未被污染"
+          echo "✅ 业务库未被污染"
+
+      - name: 变异测试
+        # 17 个变异逐个注入、跑测试、还原。
+        # runner 自带「变异必须真的改坏源码且能编译」的自检，
+        # 避免注入不完整导致「0 红」被误读成测试太弱。
+        run: python run_mutations.py
+
+  docker-build:
+    name: 构建镜像
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: 构建镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: rmb01:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  smoke-run:
+    name: 容器冒烟（真跑起来）
+    runs-on: ubuntu-latest
+    needs: docker-build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 构建镜像
+        run: docker build -t rmb01:smoke .
+
+      - name: 起容器
+        run: |
+          mkdir -p /tmp/rmb01-data
+          chmod 777 /tmp/rmb01-data
+          docker run -d --name rmb01-smoke \
+            -p 5001:5001 \
+            -e RMB01_PORT=5001 \
+            -e RMB01_DATA_DIR=/app/data \
+            -e RMB01_VECTOR_ENABLED=false \
+            -v /tmp/rmb01-data:/app/data \
+            rmb01:smoke
+
+      - name: 等待健康检查通过
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:5001/healthz; then
+              echo ""
+              echo "✅ 健康检查通过（第 ${i} 次探测）"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "❌ 容器 30 次重试内未就绪"
+          docker logs rmb01-smoke
+          exit 1
+
+      - name: 验证非 root 运行
+        run: |
+          user=$(docker exec rmb01-smoke id -un)
+          uid=$(docker exec rmb01-smoke id -u)
+          echo "容器内用户: $user (uid=$uid)"
+          test "$user" = "appuser" || { echo "❌ 期望 appuser，实际 $user"; exit 1; }
+
+      - name: 验证 entrypoint 防呆（多 worker 应被拒）
+        run: |
+          set +e
+          docker run --rm -e GUNICORN_WORKERS=3 rmb01:smoke > /tmp/out.txt 2>&1
+          code=$?
+          set -e
+          echo "退出码: $code"
+          cat /tmp/out.txt
+          test "$code" -ne 0 || { echo "❌ 多 worker 时应该拒绝启动"; exit 1; }
+          grep -q "SQLite" /tmp/out.txt || { echo "❌ 错误信息里应说明原因"; exit 1; }
+          echo "✅ 防呆生效"
+
+      - name: 验证容器内能写库（非 root 权限的实际检验）
+        run: |
+          docker exec rmb01-smoke python -c "
+          from billing import PLANS
+          from models import Tenant, db
+          assert set(PLANS) == {'free','pro','enterprise'}, PLANS
+          print('套餐:', list(PLANS))
+          t = Tenant(name='容器冒烟', slug='smoke')
+          db.session.add(t); db.session.commit()
+          assert db.session.get(Tenant, t.id) is not None
+          print('✅ 容器内数据库可读写, tenant id =', t.id)
+          "
+
+      - name: 验证业务路由与鉴权
+        run: |
+          curl -fsS http://127.0.0.1:5001/ > /dev/null && echo "✅ / 200"
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5001/api/kbs)
+          echo "未登录访问 /api/kbs -> HTTP $code（期望 401）"
+          test "$code" = "401" || { echo "❌ 期望 401"; exit 1; }
+
+      - name: 容器日志
+        if: always()
+        run: docker logs rmb01-smoke 2>&1 | tail -30 || true
+
+      - name: 清理
+        if: always()
+        run: docker rm -f rmb01-smoke || true

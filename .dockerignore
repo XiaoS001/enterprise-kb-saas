@@ -1,0 +1,37 @@
+# --- Python ---
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.coverage
+htmlcov/
+
+# --- 数据与运行时状态：不进镜像，运行时用挂载卷提供 ---
+data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+backups/
+*.db
+*.log
+
+# ⚠️ 注意：data/questions.json **要进镜像** ——
+#    retriever.py 需要它，缺了会 FileNotFoundError。
+#    所以这里不能整个排除 data/，只能排除 *.db。
+
+# --- 密钥与本地配置 ---
+.env
+
+# --- 版本控制与编辑器 ---
+.git/
+.gitignore
+.gitattributes
+.github/
+.idea/
+.vscode/
+
+# --- 测试（镜像里不需要）---
+tests/
+docs/
+*.md

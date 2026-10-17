@@ -34,6 +34,15 @@ def _env_bool(name, default=False):
     return value in ('1', 'true', 'yes', 'on')
 
 
+def _env_float(name, default=0.0):
+    """读浮点环境变量。非法值退回默认而不是启动失败。"""
+
+    try:
+        return float(_env(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
 BASE_DIR = Path(__file__).resolve().parent
 
 # --- 应用 ---
@@ -87,6 +96,12 @@ EMBEDDING_DIM = 512
 BM25_TOP_K = int(_env('RMB01_BM25_TOP_K', '5') or 5)
 CHUNK_SEPARATOR = _env('RMB01_CHUNK_SEPARATOR', '\n\n')
 CHUNK_MAX_CHARS = int(_env('RMB01_CHUNK_MAX_CHARS', '800') or 800)
+
+# 🔴 BM25 相关性阈值（相对最高分的比例）。
+#   小于这个比例的召回结果直接丢掉 —— 防止「怎么」「如何」这类
+#   高频疑问词把不相关段落拉进引用。0.35 是实测调出来的：
+#   「慢查询怎么排查」在 0.35 时只留下真正相关的那段。
+BM25_RELATIVE_THRESHOLD = _env_float('RMB01_BM25_RELATIVE_THRESHOLD', 0.35)
 
 
 def _env_bool_compat(*names, default=False):

@@ -1,0 +1,55 @@
+# RMB01 · 企业 AI 知识库问答 SaaS —— 一条命令起全套
+#
+#   docker compose up -d
+#
+# 🔴 **只起一个服务，这是刻意的**：
+#
+#   RMB03（SRE 监控平台）的 compose 里有 Prometheus + Grafana，
+#   因为那个项目的**业务就是监控**，指标端点是它的产品本身。
+#
+#   本项目是知识库问答 SaaS，**没有实现 /metrics 端点**。
+#   如果这里摆上 Prometheus + Grafana，它们只会抓自己、看着有仪表盘，
+#   但**一个业务指标都采不到** —— 那是摆样子，比不放更糟：
+#   看的人会以为「这项目有可观测性」，实际没有。
+#
+#   要做这件事的正确顺序是：先在 app.py 里加 /metrics（业务指标：
+#   问答次数、降级率、配额消耗、检索命中率），再往 compose 里加 Prometheus。
+#   **待办见 README「未验证 / 未实现清单」。**
+
+services:
+  rmb01:
+    build: .
+    image: rmb01:latest
+    container_name: rmb01
+    restart: unless-stopped
+    ports:
+      - "5001:5001"
+    environment:
+      TZ: Asia/Shanghai
+      RMB01_PORT: "5001"
+      # 🔴 单 worker：SQLite 并发写会 database is locked，
+      #    而计量扣额度是写操作 —— 多 worker 下必然锁冲突。
+      GUNICORN_WORKERS: "1"
+      RMB01_DATA_DIR: "/app/data"
+      RMB01_DATABASE_URL: "sqlite:////app/data/rmb01.db"
+      # 🔴 向量检索默认关闭：嵌入模型要联网从 HuggingFace 下载（约 90MB），
+      #    镜像里不含。BM25 是主路径，零网络依赖。
+      RMB01_VECTOR_ENABLED: "false"
+      # 密钥从 .env 注入，不写在这里
+      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
+      RMB01_SECRET_KEY: "${RMB01_SECRET_KEY:-}"
+      RMB01_PASSWORD_SALT: "${RMB01_PASSWORD_SALT:-}"
+    volumes:
+      - rmb01-data:/app/data
+      - rmb01-backups:/app/backups
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:5001/healthz', timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+volumes:
+  rmb01-data:
+  rmb01-backups:
