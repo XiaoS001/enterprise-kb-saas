@@ -137,15 +137,22 @@ jobs:
 
       - name: 验证容器内能写库（非 root 权限的实际检验）
         run: |
+          # 🔴 必须用 app.app_context()：Flask-SQLAlchemy 的 session 绑定在
+          #    应用上下文上，直接 db.session 会 RuntimeError:
+          #    Working outside of application context。
+          #    （第一版漏了，CI 在这里挂了 —— 是脚本的错，不是容器的错。）
           docker exec rmb01-smoke python -c "
+          from app import app
           from billing import PLANS
           from models import Tenant, db
           assert set(PLANS) == {'free','pro','enterprise'}, PLANS
           print('套餐:', list(PLANS))
-          t = Tenant(name='容器冒烟', slug='smoke')
-          db.session.add(t); db.session.commit()
-          assert db.session.get(Tenant, t.id) is not None
-          print('✅ 容器内数据库可读写, tenant id =', t.id)
+          with app.app_context():
+              t = Tenant(name='容器冒烟', slug='smoke')
+              db.session.add(t); db.session.commit()
+              tid = t.id
+              assert db.session.get(Tenant, tid) is not None
+          print('✅ 容器内数据库可读写, tenant id =', tid)
           "
 
       - name: 验证业务路由与鉴权
