@@ -88,9 +88,10 @@ RMB01/
 ├── templates/          # base/login/kbs/org/platform/denied（无框架无 CDN）
 ├── tests/              # 287 条测试
 ├── docs/               # API / 数据库 / 运维 / 计费规则 / 商业模式 / 截图说明
-│   └── screenshots/    # 2 张真实截图
+│   └── screenshots/    # 4 张真实截图
 ├── run_mutations.py    # 🔴 17 个变异测试（CI 里真跑）
 ├── demo_seed.py        # 演示数据 + 真实链路输出
+├── make_screenshots.py # 🔴 Playwright 自动截图 4 张
 ├── Dockerfile / docker-compose.yml / entrypoint.sh
 └── .github/workflows/ci.yml
 ```
@@ -188,7 +189,7 @@ import 期固化的常量会让测试的 `monkeypatch.setenv` 失效
 菜单显示什么和服务端放行什么**必须是同一套规则**，否则会出现
 「点得进去但 403」。`test_menu_rules_match_server_rules` 盯着这个。
 
-截图见 [`docs/截图说明.md`](docs/截图说明.md)（2 张真实截图，缺的 2 张如实标注）。
+截图见 [`docs/截图说明.md`](docs/截图说明.md)（**4 张真实截图**，由 `make_screenshots.py` 驱动 Playwright 拍摄，每张都断言了元素真实渲染）。
 
 ---
 
@@ -278,7 +279,7 @@ python run_mutations.py              # 17 个变异，CI 里真跑
 | **真实支付** | ❌ 未接入 | 只有套餐与计量，无支付网关 |
 | **邮件/短信通知** | ❌ 未实现 | 套餐表里写了但没做 |
 | **前端** | ✅ 4 个页面 | 登录 / 知识库 / 企业后台 / 平台后台，见 4.8 节 |
-| **演示截图** | ⚠️ **2 张 / 应为 4 张** | 登录页 + 知识库问答（含引用）已拍。企业后台 / 平台后台**缺** —— 截图工具连续拍照时超时，没换工具硬凑。见 `docs/截图说明.md` |
+| **演示截图** | ✅ 4 张 | 登录 / 知识库问答（含引用）/ 企业后台 / 平台后台，全部真实数据。复跑：`python make_screenshots.py` |
 | **PostgreSQL** | ❌ 未验证 | 代码支持但只在 SQLite 上跑过 |
 | **多语言** | ❌ 未支持 | 只有中文 |
 | **数据迁移** | ❌ 未做 | 用 `db.create_all()`，没有 Alembic |
