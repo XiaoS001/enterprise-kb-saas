@@ -1,0 +1,35 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 🔴 密钥：绝不提交
+.env
+
+# 🔴 数据库与运行时状态：绝不提交
+#    rmb01.db     —— 业务库（多租户数据、订阅额度）
+#    agent_state.db —— LangGraph checkpointer
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+backups/
+
+# ⚠️ 注意：data/ 本身**要提交**，因为里面是题库数据
+#    data/questions.json 是 XM03 带来的 685 道题，retriever.py 直接读它，
+#    缺了它 tests/test_retriever.py 的 4 条基线会 FileNotFoundError。
+#    只排除 *.db 那类运行时产物。
+
+# 测试临时目录
+tests/_tmp_testdata/
+
+# 日志
+*.log
+
+# 编辑器
+.idea/
+.vscode/

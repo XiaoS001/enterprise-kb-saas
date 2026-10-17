@@ -1,0 +1,24 @@
+# 行尾统一为 LF。
+#
+# 🔴 为什么必须统一（踩过的坑）：
+#   agent.py 从 XM03 复制过来是纯 LF，被编辑器保存一次后全变成 CRLF。
+#   结果是 `diff` 显示「整个文件 704 行全变」，真实的 11 行改动被淹没 ——
+#   每阶段都要 diff 一次确认「没重写核心」，行尾不统一会让这个检查失效。
+#
+#   Linux runner 上 CRLF 还会让 .sh 报 bad interpreter、YAML 解析异常。
+
+*.py    text eol=lf
+*.sh    text eol=lf
+*.md    text eol=lf
+*.html  text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.json  text eol=lf
+*.txt   text eol=lf
+Dockerfile      text eol=lf
+.dockerignore   text eol=lf
+
+# 二进制不做行尾转换
+*.png   binary
+*.jpg   binary
+*.onnx  binary

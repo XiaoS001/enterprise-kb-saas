@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>题库问答</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --page-bg: #f4f6f8;
+      --surface: #ffffff;
+      --text: #17212b;
+      --muted: #64748b;
+      --border: #d9e1e8;
+      --accent: #0f766e;
+      --accent-hover: #115e59;
+      --error-bg: #fff5f4;
+      --error-border: #f5b7b1;
+      --error-text: #9f1d14;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--page-bg);
+      color: var(--text);
+      font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+      line-height: 1.6;
+    }
+
+    .page {
+      width: min(820px, 100%);
+      margin: 0 auto;
+      padding: 48px 24px 64px;
+    }
+
+    h1 {
+      margin: 0 0 24px;
+      font-size: 28px;
+      line-height: 1.3;
+    }
+
+    .question-label {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 15px;
+      font-weight: 600;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 132px;
+      padding: 12px 14px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+      color: var(--text);
+      font: inherit;
+      resize: vertical;
+    }
+
+    textarea:focus {
+      border-color: var(--accent);
+      outline: 3px solid rgba(15, 118, 110, 0.14);
+    }
+
+    textarea:disabled {
+      background: #eef2f4;
+    }
+
+    .form-actions {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 12px;
+    }
+
+    button {
+      min-width: 104px;
+      padding: 10px 18px;
+      border: 0;
+      border-radius: 8px;
+      background: var(--accent);
+      color: #ffffff;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    button:hover:not(:disabled) {
+      background: var(--accent-hover);
+    }
+
+    button:focus-visible {
+      outline: 3px solid rgba(15, 118, 110, 0.25);
+      outline-offset: 2px;
+    }
+
+    button:disabled {
+      background: #94a3b8;
+      cursor: wait;
+    }
+
+    .status,
+    .error {
+      margin: 16px 0 0;
+      font-size: 15px;
+    }
+
+    .status {
+      color: var(--muted);
+    }
+
+    .error {
+      padding: 12px 14px;
+      border: 1px solid var(--error-border);
+      border-radius: 8px;
+      background: var(--error-bg);
+      color: var(--error-text);
+    }
+
+    .result {
+      display: grid;
+      gap: 28px;
+      margin-top: 32px;
+    }
+
+    .result-section {
+      padding-top: 20px;
+      border-top: 1px solid var(--border);
+    }
+
+    .result-section h2 {
+      margin: 0 0 12px;
+      font-size: 19px;
+      line-height: 1.4;
+    }
+
+    .answer {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .references {
+      display: grid;
+      gap: 12px;
+    }
+
+    .reference {
+      padding: 16px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+    }
+
+    .reference-row {
+      display: grid;
+      grid-template-columns: 52px minmax(0, 1fr);
+      gap: 10px;
+    }
+
+    .reference-row + .reference-row {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid #edf1f4;
+    }
+
+    .reference-label {
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .reference-text {
+      margin: 0;
+      word-break: break-word;
+    }
+
+    .empty {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    [hidden] {
+      display: none !important;
+    }
+
+    @media (max-width: 600px) {
+      .page {
+        padding: 28px 16px 48px;
+      }
+
+      h1 {
+        font-size: 24px;
+      }
+
+      .form-actions {
+        justify-content: stretch;
+      }
+
+      button {
+        width: 100%;
+      }
+
+      .reference-row {
+        grid-template-columns: 1fr;
+        gap: 2px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <h1>题库问答</h1>
+
+    <form id="ask-form">
+      <label class="question-label" for="question">问题</label>
+      <textarea
+        id="question"
+        name="question"
+        rows="5"
+        maxlength="500"
+        placeholder="请输入问题"
+        required
+      ></textarea>
+      <div class="form-actions">
+        <button id="submit-button" type="submit">提问</button>
+      </div>
+    </form>
+
+    <p id="status" class="status" role="status" aria-live="polite" hidden></p>
+    <div id="error" class="error" role="alert" hidden></div>
+
+    <div id="result" class="result" hidden>
+      <section class="result-section">
+        <h2>回答</h2>
+        <p id="answer" class="answer"></p>
+      </section>
+
+      <section class="result-section">
+        <h2>引用的题目</h2>
+        <div id="references" class="references"></div>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    const form = document.getElementById("ask-form");
+    const questionInput = document.getElementById("question");
+    const submitButton = document.getElementById("submit-button");
+    const statusElement = document.getElementById("status");
+    const errorElement = document.getElementById("error");
+    const resultElement = document.getElementById("result");
+    const answerElement = document.getElementById("answer");
+    const referencesElement = document.getElementById("references");
+
+    function setLoading(isLoading) {
+      form.setAttribute("aria-busy", String(isLoading));
+      questionInput.disabled = isLoading;
+      submitButton.disabled = isLoading;
+      submitButton.textContent = isLoading ? "检索中…" : "提问";
+      statusElement.hidden = !isLoading;
+      statusElement.textContent = isLoading ? "检索中…" : "";
+    }
+
+    function showError(message) {
+      errorElement.textContent = message;
+      errorElement.hidden = false;
+    }
+
+    function clearFeedback() {
+      errorElement.hidden = true;
+      errorElement.textContent = "";
+      resultElement.hidden = true;
+      answerElement.textContent = "";
+      referencesElement.replaceChildren();
+    }
+
+    function renderReferences(references) {
+      if (references.length === 0) {
+        const empty = document.createElement("p");
+        empty.className = "empty";
+        empty.textContent = "暂无引用题目";
+        referencesElement.append(empty);
+        return;
+      }
+
+      for (const reference of references) {
+        const article = document.createElement("article");
+        article.className = "reference";
+
+        const stemRow = document.createElement("div");
+        stemRow.className = "reference-row";
+        const stemLabel = document.createElement("span");
+        stemLabel.className = "reference-label";
+        stemLabel.textContent = "题干";
+        const stemText = document.createElement("p");
+        stemText.className = "reference-text";
+        stemText.textContent = reference.stem || "无题干";
+        stemRow.append(stemLabel, stemText);
+
+        const answerRow = document.createElement("div");
+        answerRow.className = "reference-row";
+        const answerLabel = document.createElement("span");
+        answerLabel.className = "reference-label";
+        answerLabel.textContent = "答案";
+        const answerText = document.createElement("p");
+        answerText.className = "reference-text";
+        answerText.textContent = reference.answer || "无答案";
+        answerRow.append(answerLabel, answerText);
+
+        article.append(stemRow, answerRow);
+        referencesElement.append(article);
+      }
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      clearFeedback();
+
+      const question = questionInput.value.trim();
+      if (!question) {
+        showError("请输入问题");
+        questionInput.focus();
+        return;
+      }
+
+      setLoading(true);
+
+      try {
+        const response = await fetch("/api/ask", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ question }),
+        });
+
+        let data = {};
+        try {
+          data = await response.json();
+        } catch {
+          data = {};
+        }
+
+        if (!response.ok) {
+          showError(data.error || data.answer || `请求失败（HTTP ${response.status}）`);
+          return;
+        }
+
+        answerElement.textContent = data.answer || "未返回回答";
+        renderReferences(Array.isArray(data.references) ? data.references : []);
+        resultElement.hidden = false;
+      } catch {
+        showError("网络请求失败，请稍后重试");
+      } finally {
+        setLoading(false);
+      }
+    });
+  </script>
+</body>
+</html>
