@@ -9,6 +9,7 @@
   · 两类后台的接口不共用：企业管理员调运营接口 → 403
 """
 import logging
+import re
 
 from flask import jsonify, request
 
@@ -248,5 +249,48 @@ def register_admin_routes(app):
             }
             for key, spec in PLANS.items()
         ])
+
+    # --- 注册用：创建租户 ---
+    @app.post('/api/tenants')
+    def api_create_tenant():
+        """注册流程第一步：建租户。
+
+        🔴 这个接口**故意不需要登录** —— 新用户还没有账号，
+        必然是在未登录状态下建租户。
+
+        风险与对策：
+          · 任何未登录的人都能建租户 → 会被刷垃圾租户
+            ⇒ 限流 / 邀请码在真实环境是必需的（本项目未实现，已在
+              README「未验证」里标注）
+          · 租户名重复 → 返回 409，不自动改名（改名会让用户困惑）
+        """
+
+        payload = request.get_json(silent=True) or {}
+        name = (payload.get('name') or '').strip()
+        if not name:
+            return jsonify({'error': '租户名不能为空'}), 400
+        if len(name) > 60:
+            return jsonify({'error': '租户名过长'}), 400
+
+        if Tenant.query.filter_by(name=name).first() is not None:
+            return jsonify({'error': '该名称已被使用，请换一个'}), 409
+
+        # slug 由名称派生；碰撞时追加序号
+        base = re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-') or 'tenant'
+        slug = base
+        n = 2
+        while Tenant.query.filter_by(slug=slug).first() is not None:
+            slug = f'{base}-{n}'
+            n += 1
+
+        tenant = Tenant(name=name, slug=slug)
+        db.session.add(tenant)
+        db.session.commit()
+        ensure_subscription(tenant.id)      # 默认免费版
+
+        logger.info('tenant_created', extra={
+            'event': 'tenant_created', 'tenant_id': tenant.id, 'name': name,
+        })
+        return jsonify({'id': tenant.id, 'name': tenant.name, 'slug': tenant.slug}), 201
 
     return app

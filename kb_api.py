@@ -332,10 +332,17 @@ def resolve_citations(answer, references):
 
 # ============ 序列化 ============
 def _kb_json(kb):
+    # 🔴 document_count 是界面上「N 段文档」那个数字。
+    #    前端先写了 kb.document_count，接口却没这个字段 ——
+    #    实测页面上显示成 "undefined 段文档"。
+    #    这类「字段名对不上」在前后端之间最容易漏：
+    #    两边都能跑，只是显示成 undefined，测试也不会红。
+    count = db.session.query(Document).filter_by(kb_id=kb.id).count()
     return {
         'id': kb.id,
         'name': kb.name,
         'description': kb.description,
+        'document_count': count,
         'created_at': kb.created_at.strftime('%Y-%m-%d %H:%M:%S') if kb.created_at else None,
     }
 

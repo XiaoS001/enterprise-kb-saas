@@ -2,7 +2,8 @@ import os
 
 import config
 import qa
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, redirect, render_template, request, url_for
+from auth import current_user
 
 from models import db
 
@@ -30,17 +31,61 @@ def create_app(overrides=None):
 
     # 🔴 SQLite 并发：WAL（读写不互斥）+ busy_timeout（第二个请求等待而不是立刻失败）。
     # 不设的话并发写会直接 'database is locked'。
-    try:
-        from billing import apply_sqlite_pragmas
-        apply_sqlite_pragmas(db.engine)
-    except Exception:
-        application.logger.warning('sqlite_pragmas_failed')
-
+    #
+    # ⚠️ 必须在 app_context **内部**调：db.engine 绑定在应用上下文上，
+    #    在外面调会抛异常（实测就是这里导致 sqlite_pragmas_failed 一直出现）。
     with application.app_context():
-        db.create_all()
+        _setup_sqlite_and_tables(application)
 
     _register_routes(application)
     return application
+
+
+def _setup_sqlite_and_tables(application):
+    """应用上下文内的初始化：先设 PRAGMA，再建表。
+
+    🔴 **失败不能静默吞掉**。原实现 `except Exception: logger.warning(...)`
+    有两个问题：
+      1. 真实异常被丢弃，只留一句 warning，排查时看不到原因；
+      2. 静默降级成「不用 WAL」—— 并发写会锁库，而调用方毫不知情。
+
+    现在的处理：**记录完整异常 + 记录 PRAGMA 实际值**。
+    WAL 设不上在 SQLite 里是可能的（比如某些网络文件系统），
+    所以不直接崩溃，但必须让人看得见。
+    """
+
+    from billing import apply_sqlite_pragmas
+    from models import db
+
+    pragma_ok = True
+    try:
+        apply_sqlite_pragmas(db.engine)
+    except Exception as exc:
+        pragma_ok = False
+        # 🔴 带上异常类型与原文，不然只剩一句「失败了」毫无信息
+        application.logger.warning(
+            'sqlite_pragmas_failed: %s: %s', type(exc).__name__, exc,
+        )
+
+    # 无论成功失败，都记录 PRAGMA 的**实际生效值** —— 这才是能定位问题的证据
+    try:
+        mode = db.session.execute(db.text('PRAGMA journal_mode')).scalar()
+        timeout = db.session.execute(db.text('PRAGMA busy_timeout')).scalar()
+        application.logger.info(
+            'sqlite_pragma_state journal_mode=%s busy_timeout=%s applied=%s',
+            mode, timeout, pragma_ok,
+        )
+        if not pragma_ok or str(mode).lower() != 'wal':
+            application.logger.warning(
+                'sqlite_wal_unavailable: 当前 journal_mode=%s（期望 wal）。'
+                '并发写可能报 database is locked —— '
+                '生产环境应改用 PostgreSQL。', mode,
+            )
+    except Exception:
+        application.logger.exception('sqlite_pragma_probe_failed')
+
+    db.create_all()
+
 
 
 def _register_routes(application):
@@ -55,7 +100,15 @@ def _register_routes(application):
 
     @application.get('/')
     def index():
-        return render_template('index.html')
+        """🔴 首页跳转，不再渲染旧的题库页。
+
+        阶段 6 起 `/` 是入口：已登录去知识库，未登录去登录页。
+        `templates/index.html`（XM03 的题库页）不再挂在根路径 ——
+        它和 RMB01 的知识库产品无关，留着只会让评审看到错误的首页。
+        """
+        if current_user() is None:
+            return redirect(url_for('page_login'))
+        return redirect(url_for('page_kbs'))
 
     @application.post('/api/ask')
     def ask_question():
@@ -100,7 +153,10 @@ def _register_routes(application):
 
     register_auth_routes(application)
     register_kb_routes(application)
+    from pages import register_page_routes
+
     register_admin_routes(application)
+    register_page_routes(application)
 
 
 def _get_qa_module():

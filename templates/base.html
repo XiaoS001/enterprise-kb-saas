@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}企业知识库{% endblock %}</title>
+  {# 🔴 不引 CDN：RMB03 踩过 CDN 拉不到就静默空白的坑。样式全部内联。 #}
+  <style>
+    :root {
+      --bg: #f6f7f9; --panel: #fff; --line: #e3e6ea;
+      --text: #1f2328; --muted: #656d76; --brand: #2563eb;
+      --ok: #1a7f37; --warn: #9a6700; --bad: #cf222e;
+      --radius: 8px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font: 15px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    }
+    a { color: var(--brand); text-decoration: none; }
+    header.topbar {
+      background: var(--panel); border-bottom: 1px solid var(--line);
+      padding: 0 24px; display: flex; align-items: center; gap: 20px;
+      height: 56px; position: sticky; top: 0; z-index: 10;
+    }
+    .brand { font-weight: 600; font-size: 16px; }
+    nav.links { display: flex; gap: 4px; flex: 1; }
+    nav.links a {
+      padding: 6px 12px; border-radius: 6px; color: var(--muted); font-size: 14px;
+    }
+    nav.links a:hover { background: var(--bg); color: var(--text); }
+    nav.links a.active { background: #eef2ff; color: var(--brand); font-weight: 500; }
+    .who { font-size: 13px; color: var(--muted); display: flex; gap: 12px; align-items: center; }
+    .role-tag {
+      background: #eef2ff; color: var(--brand); padding: 2px 8px;
+      border-radius: 10px; font-size: 12px;
+    }
+    main.page { max-width: 1080px; margin: 0 auto; padding: 24px; }
+    .card {
+      background: var(--panel); border: 1px solid var(--line);
+      border-radius: var(--radius); padding: 20px; margin-bottom: 16px;
+    }
+    .card h2 { margin: 0 0 14px; font-size: 15px; font-weight: 600; }
+    .grid { display: grid; gap: 16px; }
+    .grid.two { grid-template-columns: 1fr 1fr; }
+    @media (max-width: 760px) { .grid.two { grid-template-columns: 1fr; } }
+    label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+    input[type=text], input[type=password], textarea, select {
+      width: 100%; padding: 8px 10px; border: 1px solid var(--line);
+      border-radius: 6px; font: inherit; background: #fff; color: var(--text);
+    }
+    textarea { resize: vertical; }
+    input:focus, textarea:focus, select:focus {
+      outline: 2px solid #c7d7fe; outline-offset: 0; border-color: var(--brand);
+    }
+    button {
+      padding: 8px 16px; border-radius: 6px; border: 1px solid var(--line);
+      background: var(--panel); font: inherit; cursor: pointer; color: var(--text);
+    }
+    button:hover { background: var(--bg); }
+    button.primary { background: var(--brand); border-color: var(--brand); color: #fff; }
+    button.primary:hover { background: #1d4ed8; }
+    button.danger { color: var(--bad); }
+    button:disabled { opacity: .55; cursor: not-allowed; }
+    .row { display: flex; gap: 10px; align-items: center; }
+    .row.end { justify-content: flex-end; }
+    .muted { color: var(--muted); font-size: 13px; }
+    .empty { color: var(--muted); padding: 18px 0; text-align: center; }
+    .msg { padding: 10px 12px; border-radius: 6px; font-size: 14px; margin-bottom: 14px; }
+    .msg.err { background: #ffebe9; color: var(--bad); border: 1px solid #ffcecb; }
+    .msg.ok  { background: #dafbe1; color: var(--ok); border: 1px solid #aceebb; }
+    .msg.warn{ background: #fff8c5; color: var(--warn); border: 1px solid #f0e08a; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); }
+    th { color: var(--muted); font-weight: 500; font-size: 13px; }
+    tbody tr:last-child td { border-bottom: none; }
+    .stat { display: flex; gap: 28px; flex-wrap: wrap; }
+    .stat > div { min-width: 110px; }
+    .stat .num { font-size: 24px; font-weight: 600; line-height: 1.2; }
+    .stat .lbl { font-size: 12px; color: var(--muted); }
+    .bar { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; }
+    .bar > i { display: block; height: 100%; background: var(--brand); }
+    .ref {
+      border-left: 3px solid var(--brand); background: #f8faff;
+      padding: 10px 12px; border-radius: 0 6px 6px 0; margin-bottom: 8px;
+    }
+    .ref .src { font-size: 13px; color: var(--brand); font-weight: 500; }
+    .ref .txt { font-size: 13px; color: var(--muted); margin-top: 4px; }
+    .chips { display: flex; gap: 8px; flex-wrap: wrap; }
+    .chip {
+      background: var(--bg); border: 1px solid var(--line);
+      border-radius: 14px; padding: 3px 10px; font-size: 13px; cursor: pointer;
+    }
+    .chip:hover { background: #eef2ff; border-color: var(--brand); color: var(--brand); }
+    .answer { white-space: pre-wrap; line-height: 1.75; }
+    .badge { font-size: 12px; padding: 1px 7px; border-radius: 9px; }
+    .badge.deg { background: #fff8c5; color: var(--warn); }
+    .badge.ok  { background: #dafbe1; color: var(--ok); }
+    .badge.off { background: #ffebe9; color: var(--bad); }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <span class="brand">企业知识库</span>
+    <nav class="links" id="nav"></nav>
+    <span class="who" id="who"></span>
+  </header>
+  <main class="page">
+    {% block body %}{% endblock %}
+  </main>
+
+  <script>
+    // 🔴 只用一个共享小工具，不引任何第三方库
+    const API = {
+      async req(method, url, body) {
+        const opts = { method, headers: {}, credentials: 'same-origin' };
+        if (body !== undefined) {
+          opts.headers['Content-Type'] = 'application/json';
+          opts.body = JSON.stringify(body);
+        }
+        const res = await fetch(url, opts);
+        let data = null;
+        try { data = await res.json(); } catch (e) { /* 空响应 */ }
+        return { ok: res.ok, status: res.status, data };
+      },
+      get(url) { return API.req('GET', url); },
+      post(url, body) { return API.req('POST', url, body); },
+      put(url, body) { return API.req('PUT', url, body); },
+      del(url) { return API.req('DELETE', url); },
+    };
+
+    const ROLE_LABELS = {
+      platform_admin: '平台管理员',
+      org_admin: '企业管理员',
+      member: '成员',
+      viewer: '只读',
+    };
+
+    function el(tag, attrs, ...children) {
+      const node = document.createElement(tag);
+      for (const [k, v] of Object.entries(attrs || {})) {
+        if (k === 'class') node.className = v;
+        else if (k === 'text') node.textContent = v;
+        else if (k.startsWith('on')) node.addEventListener(k.slice(2), v);
+        else node.setAttribute(k, v);
+      }
+      for (const c of children) {
+        if (c == null) continue;
+        node.append(c.nodeType ? c : document.createTextNode(String(c)));
+      }
+      return node;
+    }
+
+    function showMsg(container, kind, text) {
+      container.replaceChildren(el('div', { class: 'msg ' + kind, text }));
+    }
+
+    function clearMsg(container) { container.replaceChildren(); }
+
+    // 🔴 顶部导航按角色渲染 —— 成员看不到「企业后台」，
+    //    企业管理员看不到「平台后台」。这本身就是可讲的权限设计点。
+    async function renderChrome(activePath) {
+      const me = await API.get('/api/auth/me');
+      const nav = document.getElementById('nav');
+      const who = document.getElementById('who');
+
+      if (!me.ok) {
+        nav.replaceChildren();
+        who.replaceChildren(el('a', { href: '/login', text: '登录' }));
+        return null;
+      }
+
+      const user = me.data;
+      const links = [['/kbs', '知识库']];
+      // 🔴 与企业后台页面的门控保持一致（manage_org_users）——
+      //    菜单显示什么和服务端放行什么必须是同一套规则，
+      //    否则会出现「点得进去但 403」的糟糕体验。
+      if (user.permissions.includes('manage_org_users')) {
+        links.push(['/org', '企业后台']);
+      }
+      if (user.permissions.includes('cross_tenant')) {
+        links.push(['/platform', '平台后台']);
+      }
+
+      nav.replaceChildren(...links.map(([href, label]) =>
+        el('a', {
+          href, text: label,
+          class: activePath === href ? 'active' : '',
+        })
+      ));
+
+      who.replaceChildren(
+        el('span', { class: 'role-tag', text: ROLE_LABELS[user.role] || user.role }),
+        el('span', { text: user.username }),
+        el('button', {
+          text: '退出',
+          onclick: async () => {
+            await API.post('/api/auth/logout');
+            location.href = '/login';
+          },
+        }),
+      );
+      return user;
+    }
+
+    async function loadQuotaChip() {
+      const r = await API.get('/api/org/billing');
+      if (!r.ok) return null;
+      return r.data.quota;
+    }
+  </script>
+  {% block script %}{% endblock %}
+</body>
+</html>

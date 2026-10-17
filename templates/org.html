@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+{% block title %}企业后台 · 企业知识库{% endblock %}
+
+{% block body %}
+<div id="msg"></div>
+
+<div class="card">
+  <h2>本期账单</h2>
+  <div class="stat" id="stats"><span class="muted">加载中…</span></div>
+  <div style="margin-top:18px;">
+    <div class="row" style="justify-content:space-between;margin-bottom:6px;">
+      <span class="muted">额度使用</span>
+      <span class="muted" id="quota-label"></span>
+    </div>
+    <div class="bar"><i id="quota-bar" style="width:0%"></i></div>
+  </div>
+  <div class="row" style="margin-top:18px;gap:10px;">
+    <button id="upgrade-btn" class="primary">查看可升级套餐</button>
+    <span class="muted" id="upgrade-hint"></span>
+  </div>
+  <div id="plans-box" class="hidden" style="margin-top:18px;border-top:1px solid var(--line);padding-top:16px;">
+    <div id="plans"></div>
+    <p class="muted" style="margin:12px 0 0;">
+      ⚠️ 本项目未接入支付。这里只展示套餐档位；
+      实际变更由平台管理员操作（或调用接口）。
+    </p>
+  </div>
+</div>
+
+<div class="card">
+  <h2>成员</h2>
+  <div id="members"><p class="empty">加载中…</p></div>
+</div>
+{% endblock %}
+
+{% block script %}
+<script>
+  const msgBox = document.getElementById('msg');
+
+  function renderStats(d) {
+    const q = d.quota, u = d.usage;
+    document.getElementById('stats').replaceChildren(
+      el('div', {}, el('div', { class: 'num', text: q.quota_used }),
+                   el('div', { class: 'lbl', text: '本期已用（次）' })),
+      el('div', {}, el('div', { class: 'num', text: q.quota_total }),
+                   el('div', { class: 'lbl', text: '总额度（次）' })),
+      el('div', {}, el('div', { class: 'num', text: q.quota_remaining }),
+                   el('div', { class: 'lbl', text: '剩余（次）' })),
+      el('div', {}, el('div', { class: 'num', text: u.degraded_queries }),
+                   el('div', { class: 'lbl', text: '降级次数（不扣额度）' })),
+      el('div', {}, el('div', { class: 'num', text: d.kb_count }),
+                   el('div', { class: 'lbl', text: '知识库' })),
+      el('div', {}, el('div', { class: 'num', text: d.member_count }),
+                   el('div', { class: 'lbl', text: '成员' })),
+    );
+
+    const pct = q.quota_total ? Math.min(100, q.quota_used / q.quota_total * 100) : 0;
+    const bar = document.getElementById('quota-bar');
+    bar.style.width = pct + '%';
+    bar.style.background = q.exhausted ? 'var(--bad)' : 'var(--brand)';
+    document.getElementById('quota-label').textContent =
+      q.plan_name + ' · ' + q.quota_used + ' / ' + q.quota_total
+      + (q.exhausted ? '（已用完）' : '');
+  }
+
+  function renderMembers(rows, me) {
+    const box = document.getElementById('members');
+    if (!rows.length) {
+      box.replaceChildren(el('p', { class: 'empty', text: '没有成员' }));
+      return;
+    }
+    box.replaceChildren(el('table', {},
+      el('thead', {}, el('tr', {},
+        el('th', { text: '用户名' }),
+        el('th', { text: '角色' }),
+        el('th', { text: '加入时间' }),
+        el('th', { text: '操作' }),
+      )),
+      el('tbody', {}, ...rows.map(m => {
+        const sel = el('select', { style: 'width:auto;' },
+          ...['org_admin', 'member', 'viewer'].map(r =>
+            el('option', { value: r, text: ROLE_LABELS[r],
+                           selected: m.role === r ? 'selected' : null })
+          ),
+        );
+        sel.value = m.role;
+        const btn = el('button', {
+          text: '保存',
+          onclick: async () => {
+            const r = await API.put('/api/org/members/' + m.id + '/role',
+                                    { role: sel.value });
+            if (!r.ok) {
+              // 🔴 409/400 的正文要如实显示（比如「不能修改自己的角色」）
+              showMsg(msgBox, 'err', (r.data && r.data.error) || '修改失败');
+              return;
+            }
+            showMsg(msgBox, 'ok', '已把 ' + m.username + ' 改为 '
+                                   + (ROLE_LABELS[sel.value] || sel.value));
+          },
+        });
+        return el('tr', {},
+          el('td', { text: m.username }),
+          el('td', {}, el('span', { class: 'role-tag',
+                                    text: ROLE_LABELS[m.role] || m.role })),
+          el('td', { class: 'muted', text: m.created_at || '—' }),
+          el('td', {}, el('div', { class: 'row', style: 'gap:8px;' }, sel, btn)),
+        );
+      })),
+    ));
+  }
+
+  (async () => {
+    const me = await renderChrome('/org');
+    if (!me) { location.href = '/login'; return; }
+
+    const billing = await API.get('/api/org/billing');
+    if (!billing.ok) {
+      showMsg(msgBox, 'err', (billing.data && billing.data.error) || '加载账单失败');
+    } else {
+      renderStats(billing.data);
+    }
+
+    // 只有能管成员的角色才看成员表
+    if (me.permissions.includes('manage_org_users')) {
+      const members = await API.get('/api/org/members');
+      if (members.ok) renderMembers(members.data, me);
+      else document.getElementById('members').replaceChildren(
+        el('p', { class: 'empty', text: (members.data && members.data.error) || '无权查看' }));
+    } else {
+      document.getElementById('members').replaceChildren(
+        el('p', { class: 'empty', text: '当前角色不能管理成员' }));
+    }
+
+    // 套餐列表（只读展示，变更是平台管理员的事）
+    document.getElementById('upgrade-btn').addEventListener('click', async () => {
+      const box = document.getElementById('plans-box');
+      box.classList.toggle('hidden');
+      if (box.classList.contains('hidden')) return;
+      if (document.getElementById('plans').children.length) return;
+
+      const plans = await API.get('/api/platform/plans');
+      const target = document.getElementById('plans');
+      if (!plans.ok) {
+        // 企业管理员没有 cross_tenant 权限，这里会 403 ——
+        // 用静态表兜底，而不是显示一个错误
+        target.replaceChildren(el('p', { class: 'muted',
+          text: '（套餐详情需平台管理员查看）' }));
+        return;
+      }
+      target.replaceChildren(el('table', {},
+        el('thead', {}, el('tr', {},
+          el('th', { text: '套餐' }), el('th', { text: '月费' }),
+          el('th', { text: '额度' }), el('th', { text: '说明' }),
+        )),
+        el('tbody', {}, ...plans.data.map(p =>
+          el('tr', {},
+            el('td', { text: p.name }),
+            el('td', { text: p.price_cny_month ? '¥' + p.price_cny_month : '免费' }),
+            el('td', { text: p.quota_total }),
+            el('td', { class: 'muted', text: p.features.join(' · ') }),
+          )
+        )),
+      ));
+    });
+  })();
+</script>
+{% endblock %}

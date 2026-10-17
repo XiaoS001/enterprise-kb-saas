@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block title %}登录 · 企业知识库{% endblock %}
+
+{% block body %}
+<div style="max-width:420px;margin:48px auto;">
+
+  <div class="card">
+    <h2 id="form-title">登录</h2>
+    <div id="msg"></div>
+
+    <form id="auth-form" autocomplete="on">
+      <div style="margin-bottom:14px;">
+        <label for="username">用户名</label>
+        <input type="text" id="username" name="username" required
+               autocomplete="username" placeholder="如 demo-admin">
+      </div>
+
+      <div style="margin-bottom:14px;">
+        <label for="password">密码</label>
+        <input type="password" id="password" name="password" required
+               autocomplete="current-password" placeholder="至少 8 位">
+      </div>
+
+      {# 注册才填租户名；登录不需要 #}
+      <div id="tenant-row" class="hidden" style="margin-bottom:14px;">
+        <label for="tenant_name">公司 / 租户名</label>
+        <input type="text" id="tenant_name" name="tenant_name"
+               placeholder="如 演示公司">
+        <p class="muted" style="margin:6px 0 0;">
+          首次注册会创建新租户，你就是该租户的企业管理员。
+        </p>
+      </div>
+
+      <div class="row end" style="margin-top:18px;">
+        <button type="button" id="toggle-mode">注册新租户</button>
+        <button type="submit" class="primary" id="submit-btn">登录</button>
+      </div>
+    </form>
+  </div>
+
+  <p class="muted" style="text-align:center;">
+    演示账号：<code>demo-admin</code> / <code>demo123456</code>
+  </p>
+</div>
+{% endblock %}
+
+{% block script %}
+<script>
+  const form = document.getElementById('auth-form');
+  const msgBox = document.getElementById('msg');
+  const titleEl = document.getElementById('form-title');
+  const submitBtn = document.getElementById('submit-btn');
+  const toggleBtn = document.getElementById('toggle-mode');
+  const tenantRow = document.getElementById('tenant-row');
+  let mode = 'login';   // 'login' | 'register'
+
+  toggleBtn.addEventListener('click', () => {
+    mode = mode === 'login' ? 'register' : 'login';
+    const isRegister = mode === 'register';
+    titleEl.textContent = isRegister ? '注册新租户' : '登录';
+    submitBtn.textContent = isRegister ? '注册并登录' : '登录';
+    toggleBtn.textContent = isRegister ? '已有账号，去登录' : '注册新租户';
+    tenantRow.classList.toggle('hidden', !isRegister);
+    document.getElementById('tenant_name').required = isRegister;
+    clearMsg(msgBox);
+  });
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    clearMsg(msgBox);
+    submitBtn.disabled = true;
+
+    const username = document.getElementById('username').value.trim();
+    const password = document.getElementById('password').value;
+
+    try {
+      if (mode === 'register') {
+        const tenantName = document.getElementById('tenant_name').value.trim();
+        if (!tenantName) {
+          showMsg(msgBox, 'err', '请填写公司 / 租户名');
+          return;
+        }
+
+        // 1) 建租户
+        const t = await API.post('/api/tenants', { name: tenantName });
+        if (!t.ok) {
+          showMsg(msgBox, 'err', t.data && t.data.error ? t.data.error : '创建租户失败');
+          return;
+        }
+
+        // 2) 注册成该租户的企业管理员
+        const r = await API.post('/api/auth/register', {
+          username, password, role: 'org_admin', tenant_id: t.data.id,
+        });
+        if (!r.ok) {
+          showMsg(msgBox, 'err', r.data && r.data.error ? r.data.error : '注册失败');
+          return;
+        }
+      }
+
+      const login = await API.post('/api/auth/login', { username, password });
+      if (!login.ok) {
+        showMsg(msgBox, 'err', login.data && login.data.error
+          ? login.data.error : '用户名或密码错误');
+        return;
+      }
+
+      location.href = '/kbs';
+    } catch (err) {
+      showMsg(msgBox, 'err', '网络错误：' + err.message);
+    } finally {
+      submitBtn.disabled = false;
+    }
+  });
+
+  // 已登录就直接进知识库
+  (async () => {
+    const me = await API.get('/api/auth/me');
+    if (me.ok) location.href = '/kbs';
+  })();
+</script>
+{% endblock %}

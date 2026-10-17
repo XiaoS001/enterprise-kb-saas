@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}无权访问 · 企业知识库{% endblock %}
+
+{% block body %}
+<div class="card" style="max-width:520px;margin:60px auto;text-align:center;">
+  <h2 style="font-size:17px;color:var(--bad);">无权访问</h2>
+  <p class="muted" style="margin:12px 0 22px;">{{ message }}</p>
+  <a href="/kbs"><button class="primary">返回知识库</button></a>
+</div>
+{% endblock %}
+
+{% block script %}
+<script>renderChrome(null);</script>
+{% endblock %}
