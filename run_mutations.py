@@ -131,6 +131,39 @@ MUTATIONS = [
         'old': '        if isinstance(error, QuotaExceeded):',
         'new': '        if False:  # MUTANT: 不特判 -> 走通用 error',
     },
+    {
+        'name': '14 降级时截断已用量（凭空抹掉客户消耗）',
+        'expect_min_red': 1, 'file': BILLING, 'kind': 'replace',
+        'old': '        raise PlanDowngradeConflict(',
+        'new': (
+            "        # MUTANT: 错误做法 —— 凭空把已用量截断到新额度\n"
+            "        subscription.quota_used = new_total\n"
+            "        subscription.plan = new_plan\n"
+            "        subscription.quota_total = new_total\n"
+            "        db.session.commit()\n"
+            "        return subscription\n"
+            "    if False:\n"
+            "        raise PlanDowngradeConflict("
+        ),
+    },
+    {
+        'name': '15 降级不检查已用量（产生 quota_used>quota_total）',
+        'expect_min_red': 1, 'file': BILLING, 'kind': 'replace',
+        'old': '    if new_total < subscription.quota_total and subscription.quota_used >= new_total:',
+        'new': '    if False:  # MUTANT: 不检查',
+    },
+    {
+        'name': '16 企业后台成员列表去掉租户过滤',
+        'expect_min_red': 2, 'file': ROOT / 'admin_api.py', 'kind': 'replace',
+        'old': '    rows = scoped(User, tenant_id).order_by(User.id).all()',
+        'new': '    rows = User.query.order_by(User.id).all()  # MUTANT: 去掉隔离',
+    },
+    {
+        'name': '17 改成员角色不校验租户',
+        'expect_min_red': 1, 'file': ROOT / 'admin_api.py', 'kind': 'replace',
+        'old': '    user = fetch_scoped(User, user_id)      # 🔴 跨租户 → None → 404',
+        'new': '    user = User.query.filter_by(id=user_id).first()  # MUTANT',
+    },
 ]
 
 

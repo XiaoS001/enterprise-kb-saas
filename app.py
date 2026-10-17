@@ -94,11 +94,13 @@ def _register_routes(application):
 
         return jsonify(result)
 
+    from admin_api import register_admin_routes
     from auth import register_auth_routes
     from kb_api import register_kb_routes
 
     register_auth_routes(application)
     register_kb_routes(application)
+    register_admin_routes(application)
 
 
 def _get_qa_module():

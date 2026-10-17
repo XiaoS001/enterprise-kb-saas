@@ -113,6 +113,7 @@ def apply_sqlite_pragmas(engine):
         conn.execute(text('PRAGMA journal_mode=WAL'))
         conn.execute(text('PRAGMA busy_timeout=5000'))
         conn.commit()
+
 def ensure_subscription(tenant_id, plan=DEFAULT_PLAN):
     """确保租户有订阅（没有就按默认档创建）。返回 Subscription。"""
 
@@ -130,6 +131,52 @@ def ensure_subscription(tenant_id, plan=DEFAULT_PLAN):
     db.session.add(sub)
     db.session.commit()
     return sub
+
+
+class PlanDowngradeConflict(Exception):
+    """降级到更小额度，但已用量已超过新额度。
+
+    🔴 单独一个异常类型：调用方要能明确区分「业务上不可降级」（返回 409 + 说明）
+    与「系统故障」（500）。这不是程序错误，是需要人决策的业务冲突。
+    """
+
+
+def change_plan(tenant_id, new_plan):
+    """变更套餐。返回 Subscription。
+
+    🔴 **降级时的边界处理**（审查变异②指出的场景）：
+    租户从 pro（10000）降到 free（100），但本月已用 5000。
+    此时若直接改 quota_total=100，就出现 `quota_used(5000) > quota_total(100)`：
+      · quota_remaining 变成负数
+      · 之后每次扣减都会被 WHERE 拒绝 → 租户**永久锁死**，即使升级回来也要先修复数据
+      · 账单口径也乱了
+
+    所以：**已用量超过新额度时直接拒绝降级**，由运营决定
+    「先清零重新计费周期」还是「让客户继续用完」。
+    不做「自动把已用量截断成新额度」—— 那等于凭空抹掉客户已消耗的额度，
+    对客户不公平，也会让账实不符。
+
+    升级则总是允许（额度只会变大）。
+    """
+
+    spec = PLANS.get(new_plan)
+    if spec is None:
+        raise ValueError(f'未知套餐: {new_plan}')
+
+    subscription = ensure_subscription(tenant_id)
+    new_total = spec['quota_total']
+
+    if new_total < subscription.quota_total and subscription.quota_used >= new_total:
+        raise PlanDowngradeConflict(
+            f'当前套餐已用 {subscription.quota_used} 次，'
+            f'超过 {spec["name"]}的 {new_total} 次额度，'
+            f'降级前需先处理已用量'
+        )
+
+    subscription.plan = new_plan
+    subscription.quota_total = new_total
+    db.session.commit()
+    return subscription
 
 
 def _consume_quota(subscription_id):
