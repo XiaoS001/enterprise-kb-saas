@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: 语法编译检查
+        run: python -m compileall -q app.py models.py config.py tenancy.py auth.py kb_api.py kb_search.py billing.py chunking.py
+
+      - name: 跑测试
+        # 🔴 -m 'not vector' 排除向量测试：那组会从 HuggingFace 下载模型，CI 上不该跑
+        run: python -m pytest tests -q -p no:warnings -m "not vector"
+
+      - name: 密钥扫描
+        run: |
+          if grep -rnE "sk-[A-Za-z0-9]{16,}|api_key[[:space:]]*=[[:space:]]*['\"]" \
+               --include='*.py' --include='*.yml' --include='*.json' \
+               --exclude-dir=venv .; then
+            echo "::error::检测到疑似明文密钥"
+            exit 1
+          fi
+          echo "未发现明文密钥"
+
+      - name: 业务库未被测试污染
+        run: |
+          # .gitignore 已排除 *.db；这里再确认一次 —— 测试若写了业务库会被提交
+          if git status --porcelain | grep -q '\.db$'; then
+            echo "::error::测试写出了 .db 文件（应被 .gitignore 排除）"
+            git status --porcelain | grep '\.db$'
+            exit 1
+          fi
+          echo "业务库未被污染"
