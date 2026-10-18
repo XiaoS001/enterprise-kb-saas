@@ -38,6 +38,17 @@ from tenancy import scoped
 logger = logging.getLogger('rmb01.admin')
 
 
+def _create_tenant_slug(name):
+    """由租户名派生唯一 slug（碰撞时追加序号）。幂等、可复用。"""
+    base = re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-') or 'tenant'
+    slug = base
+    n = 2
+    while Tenant.query.filter_by(slug=slug).first() is not None:
+        slug = f'{base}-{n}'
+        n += 1
+    return slug
+
+
 def _tenant_id():
     """当前用户的租户 id。平台管理员没有租户 —— 返回 None。"""
 
@@ -275,15 +286,7 @@ def register_admin_routes(app):
         if Tenant.query.filter_by(name=name).first() is not None:
             return jsonify({'error': '该名称已被使用，请换一个'}), 409
 
-        # slug 由名称派生；碰撞时追加序号
-        base = re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-') or 'tenant'
-        slug = base
-        n = 2
-        while Tenant.query.filter_by(slug=slug).first() is not None:
-            slug = f'{base}-{n}'
-            n += 1
-
-        tenant = Tenant(name=name, slug=slug)
+        tenant = Tenant(name=name, slug=_create_tenant_slug(name))
         db.session.add(tenant)
         db.session.commit()
         ensure_subscription(tenant.id)      # 默认免费版

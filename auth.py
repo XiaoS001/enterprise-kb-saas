@@ -69,7 +69,12 @@ def verify_password(password, stored_hash):
 
 
 def register_user(username, password, role=ROLE_ORG_ADMIN, tenant_id=None):
-    """注册用户。返回 (user, None) 或 (None, error)。"""
+    """注册用户。返回 (user, None) 或 (None, error)。
+
+    ⚠️ 仅供内部/测试使用。🔴 **HTTP 入口不再用这个函数** ——
+    它接受调用方传入 role/tenant_id，会把「身份授予」交给请求方。
+    对外注册必须走 register_new_tenant（强制 org_admin + 新建租户）。
+    """
 
     if not username or not password:
         return None, '用户名与密码不能为空'
@@ -95,6 +100,55 @@ def register_user(username, password, role=ROLE_ORG_ADMIN, tenant_id=None):
         username=username,
         password_hash=hash_password(password),
         role=role,
+    )
+    db.session.add(user)
+    db.session.commit()
+    return user, None
+
+
+def register_new_tenant(username, password, tenant_name=None):
+    """🔴 对外注册唯一入口：新建租户 + 该租户第一个 org_admin。
+
+    🔴 安全设计（修复 WorkBuddy 审查发现的提权漏洞）：
+    - **强制 role = org_admin**：请求体里的 role 一律忽略 —— 任何人都不能
+      通过注册把自己变成 platform_admin（那会拿到 cross_tenant 权限）
+    - **强制新建租户**：请求体里的 tenant_id 一律忽略 —— 任何人都不能
+      通过注册加入一个已有租户（那会看到别人的知识库）
+    - platform_admin 唯一来源：`init_platform_admin`（CLI / seed 脚本）
+
+    返回 (user, None) 或 (None, error)。
+    """
+
+    from admin_api import _create_tenant_slug  # 复用 slug 派生（幂等）
+
+    if not username or not password:
+        return None, '用户名与密码不能为空'
+    if len(username) < 3:
+        return None, '用户名至少 3 个字符'
+    if len(password) < 6:
+        return None, '密码至少 6 个字符'
+    if User.query.filter_by(username=username).first() is not None:
+        return None, '用户名已存在'
+
+    tenant_name = (tenant_name or username).strip()
+    if not tenant_name:
+        return None, '租户名不能为空'
+
+    from models import Tenant
+
+    tenant = Tenant(name=tenant_name, slug=_create_tenant_slug(tenant_name))
+    db.session.add(tenant)
+    db.session.flush()          # 拿到 tenant.id，不落库先取主键
+
+    from billing import ensure_subscription
+
+    ensure_subscription(tenant.id)      # 默认免费版
+
+    user = User(
+        tenant_id=tenant.id,
+        username=username,
+        password_hash=hash_password(password),
+        role=ROLE_ORG_ADMIN,            # 🔴 强制 org_admin
     )
     db.session.add(user)
     db.session.commit()
@@ -218,11 +272,13 @@ def register_auth_routes(application):
         if not isinstance(payload, dict):
             return jsonify({'error': '缺少参数'}), 400
 
-        user, error = register_user(
-            payload.get('username'),
-            payload.get('password'),
-            payload.get('role', ROLE_ORG_ADMIN),
-            payload.get('tenant_id'),
+        # 🔴 修复提权漏洞：只新建租户 + 该租户第一个 org_admin。
+        #    请求体里的 role / tenant_id **一律忽略** —— 任何人都不能
+        #    通过注册成为 platform_admin 或加入已有租户。
+        user, error = register_new_tenant(
+            username=payload.get('username'),
+            password=payload.get('password'),
+            tenant_name=payload.get('tenant_name'),
         )
         if error:
             return jsonify({'error': error}), 400
