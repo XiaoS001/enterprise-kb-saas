@@ -23,6 +23,7 @@ from billing import (
     usage_summary,
 )
 from models import (
+    ROLE_MEMBER,
     ROLE_ORG_ADMIN,
     ROLE_PLATFORM_ADMIN,
     ROLE_VIEWER,
@@ -123,6 +124,30 @@ def org_change_member_role(user_id, new_role):
     return {'id': user.id, 'role': user.role}, None
 
 
+def org_add_member(username, password, role):
+    """企业管理员给**自己的租户**加成员。返回 (user, None) 或 (None, error)。
+
+    🔴 安全约束（补 WorkBuddy 复验发现的"加成员"缺口）：
+    - 只能加到**当前租户**（tenant_id 取自会话，不是请求体）
+    - 只能加 member / viewer —— 请求体传 platform_admin / org_admin 一律拒绝
+    - 请求体里的 tenant_id / role 以外的权限位一律忽略
+    """
+
+    from auth import register_user
+
+    tenant_id = _tenant_id()
+    if tenant_id is None:
+        return None, '当前账号不属于任何租户'
+
+    if role not in (ROLE_MEMBER, ROLE_VIEWER):
+        return None, '只能添加成员或只读账号'
+
+    user, error = register_user(username, password, role, tenant_id)
+    if error:
+        return None, error
+    return user, None
+
+
 # ============ 运营后台 ============
 def platform_tenants():
     """全部租户（仅平台管理员）。"""
@@ -211,6 +236,25 @@ def register_admin_routes(app):
         if rows is None:
             return jsonify({'error': '当前账号不属于任何租户'}), 403
         return jsonify(rows)
+
+    @app.post('/api/org/members')
+    @login_required('manage_org_users')
+    def api_org_add_member():
+        payload = request.get_json(silent=True) or {}
+        # 🔴 只允许 member/viewer；role 传 platform_admin / org_admin → 400
+        user, error = org_add_member(
+            payload.get('username'),
+            payload.get('password'),
+            payload.get('role', ROLE_MEMBER),
+        )
+        if error:
+            return jsonify({'error': error}), 400
+        return jsonify({
+            'id': user.id,
+            'username': user.username,
+            'role': user.role,
+            'tenant_id': user.tenant_id,
+        }), 201
 
     @app.put('/api/org/members/<int:user_id>/role')
     @login_required('manage_org_users')

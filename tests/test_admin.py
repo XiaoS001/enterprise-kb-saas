@@ -393,3 +393,61 @@ def test_downgrade_conflict_has_runtime_test():
 
     assert 'test_downgrade_blocked_when_used_exceeds_new_quota' in src
     assert 'PlanDowngradeConflict' in src
+
+
+# ============ 加成员 POST /api/org/members（补复验缺口） ============
+
+def test_add_member_requires_manage_permission(app_with_db, admin_env):
+    """成员/只读不能加人（需 manage_org_users）。"""
+    c = app_with_db.test_client()
+    _login(c, 'A成员')
+    resp = c.post('/api/org/members', json={
+        'username': 'newbie', 'password': 'pass123456', 'role': 'member',
+    })
+    assert resp.status_code == 403
+
+
+def test_add_member_rejects_platform_admin_role(app_with_db, admin_env):
+    """传 role=platform_admin 加成员 → 400（不能提权）。"""
+    c = app_with_db.test_client()
+    _login(c, 'A管理员')
+    resp = c.post('/api/org/members', json={
+        'username': 'wannabe', 'password': 'pass123456',
+        'role': 'platform_admin',
+    })
+    assert resp.status_code == 400
+    assert resp.get_json()['error'] == '只能添加成员或只读账号'
+
+
+def test_add_member_ignores_tenant_id(app_with_db, admin_env):
+    """传 tenant_id=别人 → 落库仍是自己租户（A 管理员只能加到自己租户）。"""
+    c = app_with_db.test_client()
+    _login(c, 'A管理员')
+    b_id = admin_env['b'].id
+    resp = c.post('/api/org/members', json={
+        'username': 'teammate', 'password': 'pass123456',
+        'role': 'member', 'tenant_id': b_id,
+    })
+    assert resp.status_code == 201
+    data = resp.get_json()
+    assert data['tenant_id'] != b_id
+    assert data['tenant_id'] == admin_env['a'].id
+
+
+def test_add_member_success_within_tenant(app_with_db, admin_env):
+    """正常加成员：A 管理员给 A 租户加 member。"""
+    c = app_with_db.test_client()
+    _login(c, 'A管理员')
+    resp = c.post('/api/org/members', json={
+        'username': 'colleague', 'password': 'pass123456', 'role': 'member',
+    })
+    assert resp.status_code == 201
+    data = resp.get_json()
+    assert data['role'] == 'member'
+    assert data['tenant_id'] == admin_env['a'].id
+
+    # 新成员能登录，但看不到别的租户
+    _login(c, 'colleague')
+    assert c.get('/api/org/billing').status_code == 200
+    kbs = c.get('/api/kbs').get_json()
+    assert all(k['name'] != '乙库' for k in kbs)
