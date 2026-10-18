@@ -144,8 +144,35 @@ def main():
         assert '段' in ref_text, f'引用没标到第几段：{ref_text}'
         print(f'     引用卡片：{ref_text}')
 
-        page.evaluate('window.scrollTo(0, 0)')
-        page.wait_for_timeout(400)
+        # 🔴 取景：视口要够高把「答案 + 引用卡片」一起装进来。
+        #
+        #    之前的写法是 scrollTo(0,0) + 800 高 —— 滚到顶部后
+        #    问答区掉在视口下方被裁掉，截出来的图里**没有引用卡片**，
+        #    而这张图的意义就是展示引用。
+        #    900 高时整页正好装下（实测 docH = viewportH = 900）。
+        page.set_viewport_size({'width': 1280, 'height': 900})
+        page.wait_for_timeout(500)
+
+        # 量三个关键元素是否真的在视口内，不在就拒绝出图
+        geo = page.evaluate("""() => {
+            const vh = window.innerHeight;
+            const pick = (sel) => {
+                const el = document.querySelector(sel);
+                if (!el) return null;
+                const r = el.getBoundingClientRect();
+                return {top: Math.round(r.top), bottom: Math.round(r.bottom),
+                        visible: r.top >= 0 && r.bottom <= vh};
+            };
+            return {vh, answer: pick('#answer'), ref: pick('#refs .ref'),
+                    badge: pick('#degraded-badge')};
+        }""")
+        hidden = [k for k in ('answer', 'ref', 'badge')
+                  if geo[k] is None or not geo[k]['visible']]
+        assert not hidden, f'🔴 取景失败，这些元素不在视口内：{hidden}'
+        print(f'     取景 OK（视口 {geo["vh"]}）：'
+              f'answer top={geo["answer"]["top"]} · '
+              f'ref top={geo["ref"]["top"]}')
+
         page.screenshot(path=OUT / '2-知识库问答.png')
         shots.append('2-知识库问答.png')
         print('  ✅ 2 知识库问答')
