@@ -190,6 +190,20 @@ def ask_in_kb(kb_id, question, top_k=3, use_agent=False):
             'retrieved_count': 0,
         }, None
 
+    # 🔴 短段落自动带上紧随其后的段落。
+    #
+    # 实测问题（真调才暴露）：文档按空行分段，于是「数据库连接超时怎么处理？」
+    # 自己成为第 0 段，答案正文在第 1 段。BM25 命中的是标题段（4 个词全中），
+    # 而答案段得分 **0** —— 因为 jieba 把「连接池」切成一个词，
+    # 问题里的「连接」匹配不上，两段之间没有任何共享 token。
+    #
+    # 结果：模型只拿到一句标题 → 老实回答「知识库中没有相关内容」。
+    # 而用户明明传了答案进去。
+    #
+    # 修法：短段落（大概率是标题）把下一段一并作为材料。
+    # 这是 RAG 里常见的「上下文扩展」，治的是「分段边界把问题和答案切开」。
+    hits = _expand_short_hits(hits, kb_id, tenant_id)
+
     references = [
         {
             'document_id': hit['document_id'],
@@ -273,37 +287,91 @@ _NO_KEY_ANSWER_MARKERS = (
 
 
 def _ask_via_agent(question, evidence):
-    """经 agent 生成答案。失败一律降级，不抛。
+    """用**本次检索到的证据**生成答案。失败一律降级，不抛。
 
-    ✅ 主路径已修在源头（agent._empty_result 现在会如实标degraded=True），
-    这里的文本匹配保留为**双保险**：万一将来 agent 又出现别的降级出口
-    忘了标，外层还能兜住一层。
+    🔴 函数名沿用 `_ask_via_agent`（有测试按名字 monkeypatch 它），
+    但实现已不再走 `agent.run_agent` —— 原因见下。
 
-    之所以还要留：标记错了会直接影响阶段 4 的额度扣减
-    （降级的问答不该扣额度），多一道检查成本很低。
+    ## 原实现有个架构 bug（只有真调才暴露）
+
+    老实现是：
+
+        result = agent.run_agent(question)      # ← evidence 参数根本没用
+
+    而 `agent.run_agent` 内部走 `retriever_lc`，查的是 XM03 带来的
+    `data/questions.json`（685 道**考试题**），不是用户的知识库。
+
+    实测后果：
+      · 模型拿到的是考试题 → 与「数据库连接超时怎么处理」无关
+        → 回答「材料中没有相关内容」
+      · 引用卡片却来自我们自己的 BM25 → 《故障处理预案》第 0 段
+      · **答案和引用完全脱节**，degraded 还是 True（critic 报错）
+
+    单测全绿也发现不了：测试都 mock 掉模型，`evidence` 是个死参数。
+
+    ## 现在的做法
+
+    把证据直接交给 `kb_answer.answer_from_evidence`，
+    用知识库专用提示词作答，并要求 `[doc:<id>]` 引用。
     """
 
-    try:
-        import agent
+    from kb_answer import answer_from_evidence
 
-        result = agent.run_agent(question)
-        answer = result.get('answer', '')
-        reasons = list(result.get('degradation_reasons') or [])
+    answer, reasons = answer_from_evidence(question, evidence)
 
-        if any(marker in answer for marker in _NO_KEY_ANSWER_MARKERS):
-            reasons.append('未配置 API key，agent 走了规则降级路径')
+    if not answer:
+        return '', reasons or ['模型未产出可用答案']
 
-        if not answer:
-            return '', reasons or ['agent 返回空答案']
-        if result.get('degraded') and not reasons:
-            reasons = ['agent 内部走了降级路径']
-        return answer, reasons
-    except Exception as exc:
-        logger.warning('ask_via_agent_failed', extra={
-            'event': 'ask_via_agent_failed',
-            'error': str(exc)[:200],
+    # 双保险：模型若回了「未配置密钥」这类兜底文案，仍标降级
+    if any(marker in answer for marker in _NO_KEY_ANSWER_MARKERS):
+        reasons.append('模型返回了兜底文案')
+
+    return answer, reasons
+
+# 短于这个长度的段落视为「疑似标题」，会把下一段一并带上
+HEADING_LIKE_MAX_CHARS = 24
+
+
+def _expand_short_hits(hits, kb_id, tenant_id):
+    """短段落（疑似标题）自动带上紧随其后的同文档段落。
+
+    🔴 为什么需要：文档按空行分段时，标题会单独成为一段，答案在下一段。
+    「数据库连接超时怎么处理？」（13 字）被 BM25 高分命中，
+    而真正的答案段得分为 0 —— jieba 把「连接池」切成一个词，
+    与问题里的「连接」不共享 token。模型只看到标题，只能回答「没有相关内容」。
+
+    这是 RAG 的经典坑：**分段边界把问题和答案切开了**。
+    上下文扩展（把相邻段一起给模型）比调 BM25 参数更治本。
+
+    只对短段做扩展，长段本身信息已足够，避免把无关内容一并塞进上下文。
+    """
+
+    from tenancy import scoped      # 本模块的函数内局部导入，模块级没有
+
+    out = list(hits)
+    seen = {hit['document_id'] for hit in hits}
+
+    for hit in hits:
+        if len(hit['content']) > HEADING_LIKE_MAX_CHARS:
+            continue
+        nxt = (
+            scoped(Document, tenant_id)
+            .filter_by(kb_id=kb_id, title=hit['title'],
+                       chunk_index=hit['chunk_index'] + 1)
+            .first()
+        )
+        if nxt is None or nxt.id in seen:
+            continue
+        seen.add(nxt.id)
+        out.append({
+            'document_id': nxt.id,
+            'title': nxt.title,
+            'chunk_index': nxt.chunk_index,
+            'content': nxt.content,
+            'score': None,        # 扩展段不是检索命中，没有分数
         })
-        return '', [f'agent 调用失败: {str(exc)[:200]}']
+
+    return out
 
 
 def resolve_citations(answer, references):

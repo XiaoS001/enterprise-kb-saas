@@ -17,9 +17,28 @@ def _normalize_options(options) -> list[dict]:
     return [option for option in options if isinstance(option, dict)]
 
 
+# 🔴 端点与模型改为运行时从 config 读（原先是硬编码常量）。
+#    这两个常量只作为「官方默认值」的参考，不再参与实际调用。
 DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
 DEEPSEEK_MODEL = "deepseek-chat"
 REQUEST_TIMEOUT = 30
+
+
+def _chat_completions_url() -> str:
+    """由 config.AI_BASE_URL 拼出 /chat/completions。
+
+    这里是**裸 requests 调用**，不像 LangChain 的 ChatDeepSeek 会自己拼路径。
+
+    🔴 兼容两种配置写法：
+      · base 已含 /chat/completions  → 原样用（用户可能直接给完整地址）
+      · base 是根路径（常见）        → 补 /chat/completions
+    不处理这个会造成 `.../v1/chat/completions/chat/completions` 这种 404。
+    """
+
+    base = (config.AI_BASE_URL or DEEPSEEK_API_URL).rstrip('/')
+    if base.endswith('/chat/completions'):
+        return base
+    return f'{base}/chat/completions'
 
 
 def build_prompt(question, references) -> str:
@@ -79,8 +98,10 @@ def ask(question, top_k=5) -> dict:
         }
 
     prompt = build_prompt(question, search_results)
+    # 🔴 与 agent / qa_lc 同一个 bug：model 与 URL 都硬编码。
+    #    这里是裸 requests 调用，端点要自己拼 /chat/completions。
     request_body = {
-        "model": DEEPSEEK_MODEL,
+        "model": config.AI_MODEL,
         "messages": [{"role": "user", "content": prompt}],
         "stream": False,
     }
@@ -91,7 +112,7 @@ def ask(question, top_k=5) -> dict:
 
     try:
         response = requests.post(
-            DEEPSEEK_API_URL,
+            _chat_completions_url(),
             headers=headers,
             json=request_body,
             timeout=REQUEST_TIMEOUT,

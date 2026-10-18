@@ -66,9 +66,13 @@ def _public_references(references) -> list[dict]:
 
 
 def _invoke_model(question, materials, api_key) -> str:
+    # 🔴 与 agent._call_model 同一个 bug：model 硬编码 + 没传 api_base。
+    #    LangChain 的 ChatDeepSeek 不传 api_base 就默认打官方端点，
+    #    换第三方 OpenAI 兼容端点必然 401。
     model = ChatDeepSeek(
-        model=DEEPSEEK_MODEL,
+        model=config.AI_MODEL,
         api_key=api_key,
+        api_base=config.AI_BASE_URL,
         timeout=REQUEST_TIMEOUT,
     )
     chain = PROMPT | model

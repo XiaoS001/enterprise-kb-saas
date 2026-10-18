@@ -27,7 +27,15 @@ from skills.search_questions import (
 )
 
 
-DEEPSEEK_MODEL = "deepseek-chat"
+# 🔴 模型名与端点**不再硬编码**，一律从 config 读。
+#
+# 阶段 1 的任务单只写了「收口 key」，漏了 model 与 base_url ——
+# 后果是：无论配什么 key 都必然 401，因为
+#   · model 写死 "deepseek-chat"，不认 config.AI_MODEL
+#   · ChatDeepSeek 没传 api_base，默认打官方 api.deepseek.com
+# 换成任何第三方 OpenAI 兼容端点都会失败，而报错是 401，
+# 看起来像「key 不对」，实际是端点压根没传进去。
+DEEPSEEK_MODEL = "deepseek-chat"      # 仅作兜底常量，实际调用读 app_config.AI_MODEL
 REQUEST_TIMEOUT = 30
 MAX_ATTEMPTS = 3
 MAX_ROUNDS = 12
@@ -122,9 +130,17 @@ def _public_references(documents: list[dict]) -> list[dict]:
 
 
 def _call_model(prompt, variables: dict, api_key: str) -> str:
+    # 🔴 三个参数都必须从 config 读，一个都不能少：
+    #    model    —— 端点提供的模型名（第三方端点通常不叫 deepseek-chat）
+    #    api_base —— 不传就用官方 api.deepseek.com，第三方 key 必然 401
+    #    timeout  —— 统一超时
+    #
+    #    用 app_config.AI_MODEL（属性查找，发生在调用时）而不是本地常量：
+    #    模块级常量在 import 期固化，测试 monkeypatch.setattr(config, ...) 无效。
     model = ChatDeepSeek(
-        model=DEEPSEEK_MODEL,
+        model=app_config.AI_MODEL,
         api_key=api_key,
+        api_base=app_config.AI_BASE_URL,
         timeout=REQUEST_TIMEOUT,
     )
     response = (prompt | model).invoke(variables)

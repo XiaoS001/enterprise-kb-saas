@@ -14,7 +14,12 @@ EVALUATE_PROMPT = ChatPromptTemplate.from_messages(
             "system",
             "你负责判断给定材料是否足以完整回答用户问题。\n"
             "只输出合法 JSON，不要输出 Markdown 代码块或额外说明。\n"
-            'JSON 格式必须为：{"enough": true/false, "reason": "..."}',
+            # 🔴 花括号必须转义成 {{ }}。
+            #    ChatPromptTemplate 会把裸的 {enough} 当成模板变量，
+            #    于是调用时报「missing variables {'"enough"'}」。
+            #    这个 bug 只有真调才会暴露 —— 单测全 mock 掉模型，永远走不到
+            #    模板渲染这一步（实测：真调时 critic 每次都失败，整个问答降级）。
+            'JSON 格式必须为：{{"enough": true/false, "reason": "..."}}',
         ),
         ("human", "用户问题：{question}\n\n当前材料：\n{materials}"),
     ]

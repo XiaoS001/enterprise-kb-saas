@@ -256,13 +256,14 @@ python run_mutations.py              # 17 个变异，CI 里真跑
 
 | 项 | 怎么验的 |
 |---|---|
-| pytest 255 条 | 本地 + CI（GitHub Actions） |
+| pytest 296 条 | 本地 + CI（GitHub Actions） |
 | 变异 17 个 | CI 里 `python run_mutations.py` 真跑 |
 | Docker 镜像构建 | CI `docker-build` job |
 | 容器真跑起来 | CI `smoke-run`：`/healthz` 200、`id -un` = appuser、容器内能写库 |
 | 非 root 运行 | CI smoke-run 断言 `appuser` |
 | 多 worker 防呆 | CI smoke-run 断言 `GUNICORN_WORKERS=3` 时启动被拒 |
 | 引用链路 | `demo_seed.py` 真实输出（见 `docs/演示脚本.md`） |
+| 🔴 **真调模型一次** | 2026-10-18 · DeepSeek-V4-Flash @ AMD Radeon Cloud · `degraded=false`、答案由模型生成、`[doc:10]`/`[doc:11]` 指向《故障处理预案》。**仅单次跑通，未评测答案质量** |
 | XM03 29 文件零改动 | 每阶段 sha256 比对 |
 
 ### ⚠️ 未验证 / 未实现
@@ -271,7 +272,7 @@ python run_mutations.py              # 17 个变异，CI 里真跑
 
 | 项 | 状态 | 说明 |
 |---|---|---|
-| **真实模型作答效果** | ❌ 未验证 | 所有测试都 mock 模型调用，**没有真调过 DeepSeek API**。答案质量和引用准确性未经真实语料检验 |
+| **真实模型作答效果** | ⚠️ **仅单次跑通** | 2026-10-18 用 DeepSeek-V4-Flash @ AMD Radeon Cloud 真调过一次：`degraded=false`、答案由模型生成、`[doc:10]`/`[doc:11]` 引用指向《故障处理预案》。**只证明链路通，答案质量未评测**（没有标注集、没有对比基线）。其余测试仍全部 mock 模型 |
 | **向量检索** | ❌ 未启用 | 代码路径保留，`RMB01_VECTOR_ENABLED=false`。fastembed 装了但没跑过真实嵌入 |
 | **真实并发压测** | ❌ 未做 | 只验证了「不超扣」，没测吞吐（没有 Locust/k6） |
 | **`/metrics` 端点** | ❌ 未实现 | 所以 `docker-compose.yml` **没有** Prometheus/Grafana —— 摆着采不到业务指标是假把式 |

@@ -70,9 +70,14 @@ def main():
         page.locator('#kb-list > div').first.click()
         expect(page.get_by_text('故障处理预案')).to_be_visible()
 
-        # ① 隐藏上传区（取景需要，用户已授权）
-        page.evaluate(
-            "document.getElementById('upload-card').classList.add('hidden')")
+        # ① 取景：隐藏「上传文档」和「知识库头卡」
+        #    · upload-card —— 用户已授权隐藏
+        #    · kb-head     —— 内容（库名/ID）左栏已有，留着只会让
+        #                     滚动后顶部出现一条被裁一半的卡片残影
+        page.evaluate("""() => {
+            document.getElementById('upload-card').classList.add('hidden');
+            document.getElementById('kb-head').classList.add('hidden');
+        }""")
 
         # ② 提一个**知识库里确实有答案**的问题
         #    《故障处理预案》第 0 段就是「数据库连接超时怎么处理？」
@@ -122,16 +127,33 @@ def main():
         )
 
         if need_scroll:
-            # 滚到「刚好能让引用卡片底部露出一小节」的位置：
-            # 让 #answer-box 的底边落在视口底部上方 40px
+            # 取景优先级：
+            #   ① 让「文档列表」卡片正好贴在导航下方 —— 顶部不会出现
+            #      被裁掉一半的卡片残影，看起来是完整的一屏。
+            #   ② 若这样仍装不下引用卡片，退回到「以引用卡片底部为准」。
             page.evaluate("""() => {
-                const box = document.getElementById('answer-box');
-                const r = box.getBoundingClientRect();
-                const target = window.scrollY + r.bottom - window.innerHeight + 40;
+                const nav = document.querySelector('header.topbar');
+                const navH = nav ? nav.offsetHeight : 56;
+                const docs = document.getElementById('docs-card');
+                const target = docs.getBoundingClientRect().top
+                             + window.scrollY - navH - 8;
                 window.scrollTo(0, Math.max(0, target));
             }""")
             page.wait_for_timeout(500)
             info = boxes()
+
+            if any(info[k] is None or not info[k]['visible'] for k in targets):
+                # 兜底：让引用卡片底部落在视口底部上方 40px
+                page.evaluate("""() => {
+                    const box = document.getElementById('answer-box');
+                    const r = box.getBoundingClientRect();
+                    const target = window.scrollY + r.bottom
+                                 - window.innerHeight + 40;
+                    window.scrollTo(0, Math.max(0, target));
+                }""")
+                page.wait_for_timeout(500)
+                info = boxes()
+
             print('  （已滚动到问答区）')
 
         print(f'  视口高 {info["viewportH"]} · 文档高 {info["docH"]} · '
