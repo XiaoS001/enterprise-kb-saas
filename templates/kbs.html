@@ -1,342 +1,240 @@
 {% extends "base.html" %}
-{% block title %}知识库 · 企业知识库{% endblock %}
+{% block title %}知识库{% endblock %}
+{% block page_title %}知识库{% endblock %}
+{% block page_sub %}上传文档，提问带出处{% endblock %}
+
+{% block head %}
+<style>
+  .kb-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); gap:12px}
+  .kb-item{
+    border:1px solid var(--line); border-radius:var(--radius-sm); padding:14px;
+    background:#fff; display:flex; flex-direction:column; gap:9px;
+    transition:border-color .15s, box-shadow .15s; min-width:0;
+  }
+  .kb-item:hover{border-color:#c3d3f5; box-shadow:0 6px 18px -14px rgba(16,24,40,.5)}
+  .kb-item .name{
+    font-size:14.5px; font-weight:600; color:var(--text); display:flex;
+    align-items:center; gap:7px; min-width:0;
+  }
+  .kb-item .name a{color:inherit; overflow:hidden; text-overflow:ellipsis;
+    white-space:nowrap}
+  .kb-item .desc{font-size:12.5px; color:var(--muted); line-height:1.6;
+    min-height:20px; word-break:break-word}
+  .kb-item .foot{display:flex; align-items:center; justify-content:space-between;
+    gap:8px; margin-top:auto; padding-top:4px; flex-wrap:wrap}
+  @media (max-width:760px){ .kb-grid{grid-template-columns:1fr} }</style>
+{% endblock %}
 
 {% block body %}
-<div id="msg"></div>
+<div class="grid kpi" style="margin-bottom:14px">
+  <div class="kpi">
+    <div class="num" id="kpi-kb">—</div>
+    <div class="lbl">知识库</div>
+    <div class="hint" id="kpi-kb-hint">—</div>
+  </div>
+  <div class="kpi">
+    <div class="num" id="kpi-docs">—</div>
+    <div class="lbl">文档分段</div>
+    <div class="hint">上传后自动切段</div>
+  </div>
+  <div class="kpi">
+    <div class="num" id="kpi-queries">—</div>
+    <div class="lbl">累计提问</div>
+    <div class="hint" id="kpi-degraded">—</div>
+  </div>
+  <div class="kpi">
+    <div class="num" id="kpi-quota">—</div>
+    <div class="lbl">额度使用</div>
+    <div class="bar" style="margin-top:9px"><i id="bar-quota" style="width:0"></i></div>
+  </div>
+</div>
 
-<div class="grid" style="grid-template-columns: 300px 1fr;" id="layout">
-
-  <!-- 左栏：知识库列表 + 建库 -->
-  <aside>
-    <div class="card">
-      <h2>我的知识库</h2>
-      <div id="kb-list"><p class="empty">加载中…</p></div>
-
-      <div id="create-box" class="hidden" style="margin-top:14px;border-top:1px solid var(--line);padding-top:14px;">
-        <label for="new-kb-name">新知识库名称</label>
-        <input type="text" id="new-kb-name" placeholder="如 运维手册" maxlength="60">
-        <div class="row end" style="margin-top:10px;">
-          <button id="create-cancel">取消</button>
-          <button class="primary" id="create-confirm">创建</button>
-        </div>
-      </div>
-
-      <button id="create-toggle" class="primary" style="width:100%;margin-top:14px;">
-        新建知识库
-      </button>
+<div class="card">
+  <div class="card-head">
+    <div>
+      <h2>全部知识库</h2>
+      <div class="sub" id="kb-sub">加载中…</div>
     </div>
-  </aside>
-
-  <!-- 右栏：文档列表 + 上传 + 问答 -->
-  <section>
-    <div class="card" id="kb-head">
-      <p class="empty">从左边选一个知识库开始</p>
+    <div class="row">
+      <input class="input" id="kb-filter" placeholder="按名称筛选"
+             style="width:170px" autocomplete="off">
+      <button class="btn primary" id="btn-new-kb">新建知识库</button>
     </div>
+  </div>
 
-    <div class="card hidden" id="upload-card">
-      <h2>上传文档</h2>
-      <label for="doc-title">文档标题</label>
-      <input type="text" id="doc-title" placeholder="如 运维手册" maxlength="80">
-
-      <label for="doc-content" style="margin-top:12px;">内容（TXT / Markdown，空行分段）</label>
-      <textarea id="doc-content" rows="7"
-        placeholder="把文档内容粘进来。系统会按空行分段，每段独立建索引。"></textarea>
-
-      <div class="row end" style="margin-top:12px;">
-        <span class="muted" id="chunk-hint"></span>
-        <button class="primary" id="upload-btn">上传并分段</button>
-      </div>
-    </div>
-
-    <div class="card hidden" id="docs-card">
-      <h2>文档列表</h2>
-      <div id="doc-list"></div>
-    </div>
-
-    <div class="card hidden" id="ask-card">
-      <h2>提问</h2>
-      <div class="row">
-        <input type="text" id="question" placeholder="问一个知识库里应该有答案的问题"
-               maxlength="500" style="flex:1;">
-        <button class="primary" id="ask-btn">提问</button>
-      </div>
-      <p class="muted" style="margin:8px 0 0;" id="ask-hint"></p>
-
-      <div id="answer-box" class="hidden" style="margin-top:18px;">
-        <div class="row" style="gap:8px;margin-bottom:10px;">
-          <strong style="font-size:14px;">回答</strong>
-          <span id="degraded-badge"></span>
-        </div>
-        <p class="answer" id="answer"></p>
-
-        <div id="refs-wrap" class="hidden" style="margin-top:16px;">
-          <strong style="font-size:14px;">引用（依据哪份文档的第几段）</strong>
-          <div id="refs" style="margin-top:8px;"></div>
-        </div>
-
-        <div id="quota-line" class="muted" style="margin-top:14px;"></div>
-      </div>
-    </div>
-  </section>
+  <div id="msg"></div>
+  <div id="kb-list"></div>
 </div>
 {% endblock %}
 
 {% block script %}
 <script>
-  const msgBox = document.getElementById('msg');
-  let currentKb = null;
-  let me = null;
+(async () => {
+  const me = await renderChrome('/kbs');
+  if (!me) { location.href = '/login'; return; }
+  await loadQuotaChip();
 
-  // ---------- 渲染 ----------
-  function renderKbList(kbs) {
-    const box = document.getElementById('kb-list');
-    if (!kbs.length) {
-      box.replaceChildren(el('p', { class: 'empty', text: '还没有知识库，点下面新建。' }));
+  const canManage = (me.permissions || []).includes('manage_kb');
+  const msg = document.getElementById('msg');
+  const listBox = document.getElementById('kb-list');
+  const filterInput = document.getElementById('kb-filter');
+  const newBtn = document.getElementById('btn-new-kb');
+
+  if (!canManage) newBtn.classList.add('hidden');
+
+  let kbs = [];
+
+  function renderKpis(data) {
+    document.getElementById('kpi-kb').textContent = fmtNum(data.kbs.length);
+    const docs = data.kbs.reduce((sum, kb) => sum + (kb.document_count || 0), 0);
+    document.getElementById('kpi-docs').textContent = fmtNum(docs);
+    document.getElementById('kpi-kb-hint').textContent =
+      data.kbs.length ? '最近更新 ' + fmtTime(data.latest) : '还没有知识库';
+
+    const usage = data.billing && data.billing.usage ? data.billing.usage : null;
+    document.getElementById('kpi-queries').textContent =
+      usage ? fmtNum(usage.total_queries) : '—';
+    document.getElementById('kpi-degraded').textContent = usage
+      ? (usage.degraded_queries
+          ? '其中降级 ' + fmtNum(usage.degraded_queries) + ' 次（不计费）'
+          : '没有降级回答')
+      : '—';
+
+    const quota = data.billing ? data.billing.quota : null;
+    if (!quota) {
+      document.getElementById('kpi-quota').textContent = '—';
+    } else {
+      document.getElementById('kpi-quota').textContent =
+        fmtNum(quota.quota_used) + ' / ' + fmtNum(quota.quota_total);
+      const bar = document.getElementById('bar-quota');
+      const ratio = pct(quota.quota_used, quota.quota_total);
+      bar.style.width = Math.min(100, ratio) + '%';
+      bar.parentElement.className = 'bar' + (quota.exhausted ? ' bad' : (ratio >= 80 ? ' warn' : ''));
+    }
+
+    document.getElementById('kb-sub').textContent = data.kbs.length
+      ? data.kbs.length + ' 个知识库 · ' + fmtNum(docs) + ' 段文档'
+      : '还没有知识库';
+  }
+
+  function renderEmpty() {
+    if (me.role === 'platform_admin') {
+      listBox.replaceChildren(emptyState(
+        '平台管理员不属于任何租户',
+        '知识库按租户隔离，平台视角请看「平台后台」里每个租户的库。',
+        el('a', { class: 'btn', href: '/platform', text: '去平台后台' })));
       return;
     }
-    box.replaceChildren(...kbs.map(kb =>
-      el('div', {
-        class: 'kb-item',
-        style: 'padding:9px 10px;border-radius:6px;cursor:pointer;'
-             + (currentKb && currentKb.id === kb.id
-                ? 'background:#eef2ff;color:var(--brand);font-weight:500;'
-                : ''),
-        onclick: () => selectKb(kb),
+    listBox.replaceChildren(emptyState(
+      '还没有知识库',
+      canManage ? '新建一个，然后上传第一份文档。' : '请联系企业管理员创建。',
+      canManage ? el('button', {
+        class: 'btn primary',
+        onclick: () => openCreate(),
+      }, '新建知识库') : null));
+  }
+
+  function renderList() {
+    const keyword = filterInput.value.trim().toLowerCase();
+    const items = keyword
+      ? kbs.filter(kb => (kb.name || '').toLowerCase().includes(keyword))
+      : kbs;
+
+    if (!kbs.length) { renderEmpty(); return; }
+
+    if (!items.length) {
+      listBox.replaceChildren(emptyState('没有匹配的知识库',
+        '换个关键词试试，或者清空筛选。'));
+      return;
+    }
+
+    const grid = el('div', { class: 'kb-grid' });
+    for (const kb of items) {
+      const actions = el('div', { class: 'row' },
+        el('a', { class: 'btn sm', href: '/kbs/' + kb.id, text: '打开' }),
+        el('a', { class: 'btn sm', href: '/kbs/' + kb.id + '/ask', text: '问答' }));
+      if (canManage) {
+        actions.append(el('button', {
+          class: 'btn sm danger',
+          onclick: async () => {
+            const ok = await confirmAction(
+              '删除知识库',
+              `「${kb.name}」里的 ${fmtNum(kb.document_count)} 段文档会一起删掉，且不能恢复。`,
+              '确认删除');
+            if (!ok) return;
+            const r = await API.del('/api/kbs/' + kb.id);
+            if (!r.ok) { showMsg(msg, 'bad', r.data.error || '删除失败'); return; }
+            showMsg(msg, 'ok', `已删除「${kb.name}」`);
+            load();
+          },
+        }, '删除'));
+      }
+
+      grid.append(el('div', { class: 'kb-item' },
+        el('div', { class: 'name' },
+          el('a', { href: '/kbs/' + kb.id, text: kb.name || '未命名' }),
+          kb.document_count === 0 ? el('span', { class: 'tag warn', text: '空库' }) : null),
+        el('div', { class: 'desc', text: kb.description || '没有描述' }),
+        el('div', { class: 'foot' },
+          el('div', { class: 'chips' },
+            el('span', { class: 'tag', text: fmtNum(kb.document_count) + ' 段文档' }),
+            el('span', { class: 'tag', text: fmtTime(kb.created_at) })),
+          actions)));
+    }
+    listBox.replaceChildren(grid);
+  }
+
+  function openCreate() {
+    const nameInput = el('input', { class: 'input', placeholder: '例如：运维知识库' });
+    const descInput = el('input', { class: 'input', placeholder: '一句话说明这个库存什么（可不填）' });
+    const hint = el('div', { class: 'msg' });
+
+    const submit = el('button', {
+      class: 'btn primary',
+      onclick: async () => {
+        const name = nameInput.value.trim();
+        if (!name) { showMsg(hint, 'bad', '请填写知识库名称'); nameInput.focus(); return; }
+        submit.disabled = true;
+        const r = await API.post('/api/kbs', { name, description: descInput.value.trim() });
+        submit.disabled = false;
+        if (!r.ok) { showMsg(hint, 'bad', r.data.error || '创建失败'); return; }
+        closeDrawer();
+        toast('已创建「' + r.data.name + '」', 'ok');
+        load();
       },
-        el('div', { text: kb.name }),
-        el('div', { class: 'muted', text: kb.document_count + ' 段文档' }),
-      )
-    ));
+    }, '创建');
+
+    openDrawer('新建知识库', '创建后即可上传文档', [
+      hint,
+      el('div', { class: 'field' }, el('label', { text: '名称' }), nameInput),
+      el('div', { class: 'field' }, el('label', { text: '描述' }), descInput),
+      el('div', { class: 'row', style: 'justify-content:flex-end' }, submit),
+    ]);
+    setTimeout(() => nameInput.focus(), 50);
   }
 
-  function renderKbHead(kb) {
-    document.getElementById('kb-head').replaceChildren(
-      el('div', { class: 'row', style: 'justify-content:space-between;' },
-        el('div', {},
-          el('div', { style: 'font-size:16px;font-weight:600;', text: kb.name }),
-          el('div', { class: 'muted', text: '知识库 ID ' + kb.id }),
-        ),
-        (me && me.permissions.includes('delete_kb'))
-          ? el('button', {
-              class: 'danger',
-              text: '删除此库',
-              onclick: async () => {
-                if (!confirm('删除「' + kb.name + '」及其全部文档？')) return;
-                const r = await API.del('/api/kbs/' + kb.id);
-                if (r.ok) { currentKb = null; await boot(); }
-                else showMsg(msgBox, 'err', '删除失败');
-              },
-            })
-          : null,
-      )
-    );
-  }
+  async function load() {
+    const [kbsRes, billingRes] = await Promise.all([
+      API.get('/api/kbs'),
+      API.get('/api/org/billing'),
+    ]);
 
-  function renderDocs(docs) {
-    const box = document.getElementById('doc-list');
-    if (!docs.length) {
-      box.replaceChildren(el('p', { class: 'empty', text: '还没有文档，上面粘贴一段试试。' }));
+    if (!kbsRes.ok) {
+      showMsg(msg, 'bad', kbsRes.data.error || '知识库加载失败');
+      listBox.replaceChildren();
       return;
     }
-    // 按 title 归组，显示「文档 / 段数」
-    const grouped = new Map();
-    for (const d of docs) {
-      const g = grouped.get(d.title) || { count: 0, first: d };
-      g.count += 1;
-      grouped.set(d.title, g);
-    }
-    box.replaceChildren(el('table', {},
-      el('thead', {}, el('tr', {},
-        el('th', { text: '文档' }),
-        el('th', { text: '段数' }),
-        el('th', { text: '首段预览' }),
-      )),
-      el('tbody', {}, ...[...grouped.entries()].map(([title, g]) =>
-        el('tr', {},
-          el('td', { text: title }),
-          el('td', { text: g.count }),
-          el('td', { class: 'muted',
-                     text: (g.first.content || '').slice(0, 46) + '…' }),
-        )
-      )),
-    ));
+    clearMsg(msg);
+
+    kbs = kbsRes.data || [];
+    const latest = kbs.map(kb => kb.created_at).filter(Boolean).sort().pop() || null;
+    renderKpis({ kbs, billing: billingRes.ok ? billingRes.data : null, latest });
+    renderList();
   }
 
-  function renderAnswer(body) {
-    document.getElementById('answer-box').classList.remove('hidden');
-
-    const badge = document.getElementById('degraded-badge');
-    badge.replaceChildren(
-      el('span', {
-        class: 'badge ' + (body.degraded ? 'deg' : 'ok'),
-        text: body.degraded ? '降级响应' : '正常',
-      })
-    );
-
-    const answerEl = document.getElementById('answer');
-    answerEl.textContent = body.answer || '（本次没有生成答案，只返回了检索证据）';
-
-    const refsWrap = document.getElementById('refs-wrap');
-    const refsBox = document.getElementById('refs');
-    if (body.references && body.references.length) {
-      refsWrap.classList.remove('hidden');
-      refsBox.replaceChildren(...body.references.map(ref =>
-        el('div', { class: 'ref' },
-          el('div', { class: 'src',
-                      text: '依据《' + ref.title + '》第 ' + (ref.chunk_index + 1) + ' 段' }),
-          el('div', { class: 'txt', text: ref.preview }),
-        )
-      ));
-    } else {
-      refsWrap.classList.add('hidden');
-      refsBox.replaceChildren();
-    }
-
-    // 额度提示：降级不扣额度这条要在界面上说清楚
-    const q = body.usage && body.usage.quota;
-    const line = document.getElementById('quota-line');
-    if (q) {
-      line.textContent = body.degraded
-        ? '本次为降级响应，未扣额度。当前额度 ' + q.quota_used + '/' + q.quota_total
-        : '本次已计费。当前额度 ' + q.quota_used + '/' + q.quota_total;
-    } else {
-      line.textContent = '';
-    }
-  }
-
-  // ---------- 数据 ----------
-  async function loadKbs() {
-    const r = await API.get('/api/kbs');
-    if (!r.ok) { showMsg(msgBox, 'err', '加载知识库失败'); return []; }
-    renderKbList(r.data);
-    return r.data;
-  }
-
-  async function selectKb(kb) {
-    currentKb = kb;
-    clearMsg(msgBox);
-    await loadKbs();                       // 刷新左栏高亮
-
-    renderKbHead(kb);
-    let canUpload = me && me.permissions.includes('upload_doc');
-    let canAsk = me && me.permissions.includes('ask');
-
-    document.getElementById('upload-card').classList.toggle('hidden', !canUpload);
-    document.getElementById('ask-card').classList.toggle('hidden', !canAsk);
-    document.getElementById('docs-card').classList.remove('hidden');
-    document.getElementById('answer-box').classList.add('hidden');
-
-    document.getElementById('ask-hint').textContent = canAsk
-      ? '' : '当前角色没有提问权限';
-    if (!canUpload) {
-      document.getElementById('upload-card').classList.add('hidden');
-    }
-
-    const docs = await API.get('/api/kbs/' + kb.id + '/documents');
-    if (docs.ok) renderDocs(docs.data);
-  }
-
-  // ---------- 事件 ----------
-  document.getElementById('create-toggle').addEventListener('click', () => {
-    document.getElementById('create-box').classList.remove('hidden');
-    document.getElementById('create-toggle').classList.add('hidden');
-    document.getElementById('new-kb-name').focus();
-  });
-
-  document.getElementById('create-cancel').addEventListener('click', () => {
-    document.getElementById('create-box').classList.add('hidden');
-    document.getElementById('create-toggle').classList.remove('hidden');
-    document.getElementById('new-kb-name').value = '';
-  });
-
-  document.getElementById('create-confirm').addEventListener('click', async () => {
-    const name = document.getElementById('new-kb-name').value.trim();
-    if (!name) { showMsg(msgBox, 'err', '请填名称'); return; }
-
-    const r = await API.post('/api/kbs', { name });
-    if (!r.ok) {
-      showMsg(msgBox, 'err', (r.data && r.data.error) || '创建失败');
-      return;
-    }
-    document.getElementById('new-kb-name').value = '';
-    document.getElementById('create-box').classList.add('hidden');
-    document.getElementById('create-toggle').classList.remove('hidden');
-    showMsg(msgBox, 'ok', '知识库已创建');
-    await loadKbs();
-    await selectKb(r.data);
-  });
-
-  document.getElementById('upload-btn').addEventListener('click', async () => {
-    if (!currentKb) return;
-    const title = document.getElementById('doc-title').value.trim();
-    const content = document.getElementById('doc-content').value;
-    if (!title) { showMsg(msgBox, 'err', '请填文档标题'); return; }
-    if (!content.trim()) { showMsg(msgBox, 'err', '内容不能为空'); return; }
-
-    const btn = document.getElementById('upload-btn');
-    btn.disabled = true;
-    try {
-      const r = await API.post('/api/kbs/' + currentKb.id + '/documents',
-                               { title, content });
-      if (!r.ok) {
-        showMsg(msgBox, 'err', (r.data && r.data.error) || '上传失败');
-        return;
-      }
-      const n = r.data.chunks.length;
-      showMsg(msgBox, 'ok', '已上传《' + title + '》，切成 ' + n + ' 段');
-      document.getElementById('doc-title').value = '';
-      document.getElementById('doc-content').value = '';
-      const docs = await API.get('/api/kbs/' + currentKb.id + '/documents');
-      if (docs.ok) renderDocs(docs.data);
-      await loadKbs();
-    } finally {
-      btn.disabled = false;
-    }
-  });
-
-  document.getElementById('ask-btn').addEventListener('click', ask);
-  document.getElementById('question').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); ask(); }
-  });
-
-  async function ask() {
-    if (!currentKb) return;
-    const question = document.getElementById('question').value.trim();
-    if (!question) return;
-
-    const btn = document.getElementById('ask-btn');
-    btn.disabled = true;
-    clearMsg(msgBox);
-    try {
-      const r = await API.post('/api/kbs/' + currentKb.id + '/ask',
-                               { question, use_agent: true });
-      if (!r.ok) {
-        // 🔴 额度用完是 403 —— 要把 409/403 的正文如实显示，
-        //    而不是笼统的「出错了」。
-        const text = (r.data && r.data.error) || '请求失败';
-        showMsg(msgBox, r.status === 403 ? 'warn' : 'err',
-                text + (r.data && r.data.code === 'quota_exceeded'
-                  ? '（升级套餐后立即可用）' : ''));
-        return;
-      }
-      renderAnswer(r.data);
-    } catch (err) {
-      showMsg(msgBox, 'err', '网络错误：' + err.message);
-    } finally {
-      btn.disabled = false;
-    }
-  }
-
-  // ---------- 启动 ----------
-  (async () => {
-    me = await renderChrome('/kbs');
-    if (!me) { location.href = '/login'; return; }
-
-    const canCreate = me.permissions.includes('create_kb');
-    document.getElementById('create-toggle').classList.toggle('hidden', !canCreate);
-
-    const kbs = await loadKbs();
-    if (kbs.length) await selectKb(kbs[0]);
-  })();
+  newBtn.addEventListener('click', openCreate);
+  filterInput.addEventListener('input', renderList);
+  load();
+})();
 </script>
 {% endblock %}

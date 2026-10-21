@@ -59,6 +59,36 @@ def tokenize(text):
     ]
 
 
+def tokenize_raw(text):
+    """不过滤停用词的分词 —— **只给检索对比页的对照策略用**。
+
+    线上检索永远走 tokenize()；这个函数存在的意义是让 /compare 页
+    能真实跑一遍「不加停用词过滤会怎样」，而不是嘴上说。
+    """
+
+    return [t for t in jieba.cut(text or '') if t.strip()]
+
+
+def lexical_coverage(content, query_tokens):
+    """查询实词在内容里命中几个 / 需要几个（够不够相关的判据）。
+
+    🔴 单独抽出来是因为它同时被两处用：
+      · search_documents 里做过滤（线上口径）
+      · /compare 页统计「基线返回的段有几段其实不相关」（噪声口径）
+    两处必须是**同一条规则**，否则对比数字自相矛盾。
+    """
+
+    content_tokens = [t for t in query_tokens if t.strip()]
+    need = max(1, len(content_tokens) // 2)
+    hit = sum(1 for tok in content_tokens if tok in content)
+    return hit, need
+
+
+def passes_coverage(content, query_tokens):
+    hit, need = lexical_coverage(content, query_tokens)
+    return hit >= need
+
+
 def load_documents(kb_id, tenant_id):
     """🔴 取某知识库的文档分段 —— **必须经scoped 保证租户隔离**。
 
@@ -142,16 +172,14 @@ def search_documents(kb_id, query, top_k=3, tenant_id=None):
         #   这是「够不够相关」的本质判据，比调阈值稳。
         top_score = ranked[0][1] if ranked else 0
         relative_min = top_score * config.BM25_RELATIVE_THRESHOLD
-        content_tokens = [t for t in query_tokens if t.strip()]
-        need = max(1, len(content_tokens) // 2)
 
         candidates = []
         for doc, score in ranked:
             if not (score > 0 and score >= relative_min):
                 continue
-            hit = sum(1 for tok in content_tokens if tok in doc['content'])
-            if hit >= need:
-                candidates.append((doc, score))
+            if not passes_coverage(doc['content'], query_tokens):
+                continue
+            candidates.append((doc, score))
 
     return [
         {**doc, 'score': round(float(score), 4)}
@@ -175,3 +203,46 @@ def format_citations(hits):
             f"    {hit['content'][:300]}"
         )
     return '\n'.join(lines)
+
+
+def search_documents_baseline(kb_id, query, top_k=3, tenant_id=None):
+    """对照策略：**裸 BM25**（不滤停用词、不设阈值、不做覆盖率检查）。
+
+    🔴 这不是线上口径，只用于 /compare 页做「加了过滤到底改善了什么」的实测对照。
+
+    它和 search_documents 的差别只有三处，全部来自策略本身：
+
+      · 分词不滤停用词  → 「怎么」「什么」这类词会参与打分
+      · 不看分数是否 > 0 → 单文档库的负 idf 也照收
+      · 不看词面覆盖率   → 沾一点边就进结果
+
+    结果就是：**它永远能凑满 top_k 段**。问答链路里这是最危险的形态 ——
+    检索永远"有结果"，模型于是永远有材料可编。
+    """
+
+    if tenant_id is None:
+        from tenancy import get_current_tenant_id
+        tenant_id = get_current_tenant_id()
+
+    if tenant_id is None:
+        return []
+
+    documents = load_documents(kb_id, tenant_id)
+    if not documents:
+        return []
+
+    corpus = [tokenize_raw(doc['content']) for doc in documents]
+    if not any(corpus):
+        return []
+
+    bm25 = BM25Okapi(corpus)
+    scores = bm25.get_scores(tokenize_raw(query))
+
+    ranked = sorted(
+        zip(documents, scores), key=lambda pair: pair[1], reverse=True,
+    )[:max(1, top_k)]
+
+    return [
+        {**doc, 'score': round(float(score), 4)}
+        for doc, score in ranked
+    ]

@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+{% block title %}用量明细{% endblock %}
+{% block page_title %}用量明细{% endblock %}
+{% block page_sub %}每一次提问都记在这里{% endblock %}
+
+{% block head %}
+<style>
+  .q-cell{max-width:420px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .pager{display:flex; align-items:center; justify-content:space-between; gap:10px;
+    margin-top:12px; flex-wrap:wrap}
+  .pager .info{font-size:12.5px; color:var(--muted)}
+  .pager .ctrl{display:flex; align-items:center; gap:8px}
+</style>
+{% endblock %}
+
+{% block body %}
+<div class="grid kpi" id="kpis" style="margin-bottom:14px"></div>
+
+<div class="card">
+  <div class="card-head">
+    <div>
+      <h2>问答流水</h2>
+      <div class="sub" id="usage-sub">加载中…</div>
+    </div>
+    <div class="row">
+      <select class="select" id="page-size" style="width:110px">
+        <option value="20">每页 20</option>
+        <option value="50">每页 50</option>
+        <option value="100">每页 100</option>
+      </select>
+      <a class="btn" href="/org">返回企业后台</a>
+    </div>
+  </div>
+  <div id="msg"></div>
+  <div id="rows"></div>
+  <div id="pager"></div>
+</div>
+{% endblock %}
+
+{% block script %}
+<script>
+(async () => {
+  const me = await renderChrome('/org/usage');
+  if (!me) { location.href = '/login'; return; }
+  await loadQuotaChip();
+
+  const msg = document.getElementById('msg');
+  const rowsBox = document.getElementById('rows');
+  const pagerBox = document.getElementById('pager');
+  const sizeSelect = document.getElementById('page-size');
+
+  const state = { page: 1, page_size: 20 };
+
+  function renderKpis(data) {
+    const summary = data.summary || {};
+    const quota = data.quota || {};
+    const ratio = pct(quota.quota_used || 0, quota.quota_total || 0);
+
+    document.getElementById('kpis').replaceChildren(
+      el('div', { class: 'kpi' },
+        el('div', { class: 'num', text: fmtNum(summary.total_queries || 0) }),
+        el('div', { class: 'lbl', text: '全部提问' }),
+        el('div', { class: 'hint', text: '含降级' })),
+      el('div', { class: 'kpi' },
+        el('div', { class: 'num', text: fmtNum(summary.billable_queries || 0) }),
+        el('div', { class: 'lbl', text: '计费的提问' }),
+        el('div', { class: 'hint', text: '只有真调模型的才算' })),
+      el('div', { class: 'kpi' },
+        el('div', { class: 'num', text: fmtNum(summary.degraded_queries || 0) }),
+        el('div', { class: 'lbl', text: '降级提问' }),
+        el('div', { class: 'hint', text: '降级不扣额度' })),
+      el('div', { class: 'kpi' },
+        el('div', { class: 'num',
+          text: `${fmtNum(quota.quota_used || 0)} / ${fmtNum(quota.quota_total || 0)}` }),
+        el('div', { class: 'lbl', text: '额度' }),
+        el('div', { class: 'bar' + (quota.exhausted ? ' bad' : (ratio >= 80 ? ' warn' : '')),
+          style: 'margin-top:9px' },
+          el('i', { style: `width:${Math.min(100, ratio)}%` }))));
+  }
+
+  function renderRows(data) {
+    const items = data.items || [];
+    document.getElementById('usage-sub').textContent = data.total
+      ? `共 ${fmtNum(data.total)} 条 · 第 ${data.page}/${data.pages || 1} 页`
+      : '还没有提问记录';
+
+    if (!items.length) {
+      rowsBox.replaceChildren(emptyState(
+        data.total ? '这一页是空的' : '还没有提问记录',
+        data.total ? '回到第一页看看。' : '去知识库里提一个问题，这里就有数据了。',
+        el('a', { class: 'btn', href: '/kbs', text: '去知识库' })));
+      return;
+    }
+
+    const tbody = el('tbody');
+    for (const item of items) {
+      tbody.append(el('tr', {},
+        el('td', { class: 'muted nowrap' }, fmtTime(item.created_at)),
+        el('td', {}, item.username
+          ? el('div', { class: 'row' },
+              el('span', { class: 'avatar', text: item.username.slice(0, 1).toUpperCase() }),
+              el('span', { text: item.username }))
+          : el('span', { class: 'muted', text: '已删除的账号' })),
+        el('td', {},
+          el('div', { class: 'q-cell', title: item.question, text: item.question || '—' })),
+        el('td', { class: 'num' }, fmtNum(item.tokens || 0)),
+        el('td', {}, item.degraded
+          ? el('span', { class: 'tag warn', text: '降级 · 不计费' })
+          : el('span', { class: 'tag ok', text: '正常' }))));
+    }
+
+    rowsBox.replaceChildren(el('div', { class: 'table-wrap' },
+      el('table', { class: 'table' },
+        el('thead', {}, el('tr', {},
+          el('th', { text: '时间' }),
+          el('th', { text: '提问者' }),
+          el('th', { text: '问题' }),
+          el('th', { text: 'tokens', class: 'num' }),
+          el('th', { text: '状态' }))),
+        tbody)));
+  }
+
+  function renderPager(data) {
+    if (!data.total) { pagerBox.replaceChildren(); return; }
+    const pages = data.pages || 1;
+
+    pagerBox.replaceChildren(el('div', { class: 'pager', style: 'justify-content:flex-end' },
+      el('div', { class: 'ctrl' },
+        el('button', {
+          class: 'btn sm',
+          disabled: data.page <= 1,
+          onclick: () => load(state.page - 1),
+        }, '上一页'),
+        el('span', { class: 'muted', style: 'font-size:12.5px',
+          text: `${data.page} / ${pages}` }),
+        el('button', {
+          class: 'btn sm',
+          disabled: data.page >= pages,
+          onclick: () => load(state.page + 1),
+        }, '下一页'))));
+  }
+
+  async function load(page) {
+    state.page = Math.max(1, page || 1);
+    clearMsg(msg);
+
+    const r = await API.get(`/api/org/usage?page=${state.page}&page_size=${state.page_size}`);
+    if (!r.ok) {
+      showMsg(msg, 'bad', r.data.error || '用量加载失败');
+      rowsBox.replaceChildren();
+      pagerBox.replaceChildren();
+      return;
+    }
+    renderKpis(r.data);
+    renderRows(r.data);
+    renderPager(r.data);
+  }
+
+  sizeSelect.addEventListener('change', () => {
+    state.page_size = Number(sizeSelect.value) || 20;
+    load(1);
+  });
+
+  load(1);
+})();
+</script>
+{% endblock %}

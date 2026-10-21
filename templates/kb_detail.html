@@ -1,0 +1,304 @@
+{% extends "base.html" %}
+{% block title %}知识库详情{% endblock %}
+{% block page_title %}知识库详情{% endblock %}
+{% block page_sub %}文档分段与上传{% endblock %}
+
+{% block head %}
+<style>
+  .doc-title{display:flex; align-items:center; gap:8px; flex-wrap:wrap}
+  .doc-title b{font-weight:600}
+  .chunk-list{display:flex; flex-direction:column; gap:8px}
+  .chunk{
+    border:1px solid var(--line); border-radius:var(--radius-sm); padding:11px 13px;
+    background:#fff;
+  }
+  .chunk .meta{
+    display:flex; align-items:center; gap:7px; flex-wrap:wrap;
+    font-size:11.5px; color:var(--faint); margin-bottom:6px;
+  }
+  .chunk .body{white-space:pre-wrap; font-size:13px; line-height:1.75; word-break:break-word}
+  .chunk .body.clamp{display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical;
+    overflow:hidden}
+  .upload-area{display:flex; flex-direction:column; gap:2px}
+  .counter{font-size:11.5px; color:var(--faint); text-align:right; margin-top:4px}
+</style>
+{% endblock %}
+
+{% block body %}
+<div class="card">
+  <div class="card-head">
+    <div style="min-width:0">
+      <h2 id="kb-name">加载中…</h2>
+      <div class="sub" id="kb-desc"></div>
+      <div class="chips" id="kb-tags" style="margin-top:8px"></div>
+    </div>
+    <div class="row" id="kb-actions">
+      <a class="btn" href="/kbs" id="back-link">返回列表</a>
+    </div>
+  </div>
+  <div id="msg"></div>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <div>
+      <h2>文档</h2>
+      <div class="sub" id="doc-sub">加载中…</div>
+    </div>
+    <div class="row">
+      <input class="input" id="doc-filter" placeholder="按标题筛选"
+             style="width:160px" autocomplete="off">
+      <button class="btn primary" id="btn-upload">上传文档</button>
+    </div>
+  </div>
+  <div id="doc-list"></div>
+</div>
+{% endblock %}
+
+{% block script %}
+<script>
+(async () => {
+  const me = await renderChrome('/kbs');
+  if (!me) { location.href = '/login'; return; }
+  await loadQuotaChip();
+
+  const KB_ID = {{ kb_id }};
+  const canUpload = (me.permissions || []).includes('upload_doc');
+
+  const msg = document.getElementById('msg');
+  const docList = document.getElementById('doc-list');
+  const docFilter = document.getElementById('doc-filter');
+  const uploadBtn = document.getElementById('btn-upload');
+
+  if (!canUpload) uploadBtn.classList.add('hidden');
+
+  let groups = [];      // [{title, chunks:[...], created_at, tokens}]
+
+  // 同一 title 的多个 chunk 归成「一篇文档」
+  function groupByTitle(rows) {
+    const map = new Map();
+    for (const row of rows) {
+      const key = row.title || '未命名';
+      if (!map.has(key)) {
+        map.set(key, { title: key, chunks: [], created_at: row.created_at, tokens: 0 });
+      }
+      const group = map.get(key);
+      group.chunks.push(row);
+      group.tokens += (row.token_count || 0);
+    }
+    for (const group of map.values()) {
+      group.chunks.sort((a, b) => a.chunk_index - b.chunk_index);
+    }
+    return Array.from(map.values()).sort((a, b) => (a.title > b.title ? 1 : -1));
+  }
+
+  function renderHeader(kb) {
+    document.getElementById('kb-name').textContent = kb.name || '未命名知识库';
+    document.title = (kb.name || '知识库') + ' · 企业 AI 知识库';
+    document.getElementById('kb-desc').textContent = kb.description || '没有描述';
+
+    const totalChunks = groups.reduce((sum, g) => sum + g.chunks.length, 0);
+    const totalTokens = groups.reduce((sum, g) => sum + g.tokens, 0);
+    document.getElementById('kb-tags').replaceChildren(
+      el('span', { class: 'tag brand', text: fmtNum(groups.length) + ' 篇文档' }),
+      el('span', { class: 'tag', text: fmtNum(totalChunks) + ' 段' }),
+      el('span', { class: 'tag', text: fmtNum(totalTokens) + ' 词入索引' }),
+      el('span', { class: 'tag', text: '创建于 ' + fmtTime(kb.created_at) }));
+
+    const actions = document.getElementById('kb-actions');
+    actions.replaceChildren(
+      el('a', { class: 'btn', href: '/kbs', text: '返回列表' }),
+      el('a', { class: 'btn primary', href: '/kbs/' + KB_ID + '/ask', text: '去问答' }));
+
+    document.getElementById('doc-sub').textContent =
+      groups.length ? fmtNum(groups.length) + ' 篇 · ' + fmtNum(totalChunks) + ' 段' : '还没有文档';
+  }
+
+  function renderDocs() {
+    const keyword = docFilter.value.trim().toLowerCase();
+    const items = keyword
+      ? groups.filter(g => g.title.toLowerCase().includes(keyword))
+      : groups;
+
+    if (!groups.length) {
+      docList.replaceChildren(emptyState(
+        '这个库还没有文档',
+        canUpload ? '上传一份纯文本，会自动切成 400 字左右的段。' : '请联系企业管理员上传。',
+        canUpload ? el('button', { class: 'btn primary', onclick: openUpload }, '上传文档') : null));
+      return;
+    }
+    if (!items.length) {
+      docList.replaceChildren(emptyState('没有匹配的文档', '换个关键词试试。'));
+      return;
+    }
+
+    const tbody = el('tbody');
+    for (const group of items) {
+      const del = el('button', {
+        class: 'btn sm danger',
+        onclick: async () => {
+          const ok = await confirmAction(
+            '删除文档',
+            `「${group.title}」的 ${group.chunks.length} 段会一起删掉，检索里立刻消失。`,
+            '确认删除');
+          if (!ok) return;
+          let failed = 0;
+          for (const chunk of group.chunks) {
+            const r = await API.del('/api/documents/' + chunk.id);
+            if (!r.ok) failed += 1;
+          }
+          if (failed) {
+            showMsg(msg, 'bad', `${failed} 段删除失败，请刷新后重试`);
+          } else {
+            showMsg(msg, 'ok', `已删除「${group.title}」`);
+          }
+          load();
+        },
+      }, '删除');
+
+      tbody.append(el('tr', {},
+        el('td', {}, el('div', { class: 'doc-title' },
+          el('b', { text: group.title }),
+          el('span', { class: 'tag', text: fmtNum(group.chunks.length) + ' 段' }))),
+        el('td', { class: 'num' }, fmtNum(group.tokens) || '—'),
+        el('td', { class: 'nowrap muted' }, fmtTime(group.created_at)),
+        el('td', {},
+          el('div', { class: 'row' },
+            el('button', {
+              class: 'btn sm',
+              onclick: () => preview(group),
+            }, '预览分段'),
+            del))));
+    }
+
+    docList.replaceChildren(el('div', { class: 'table-wrap' },
+      el('table', { class: 'table' },
+        el('thead', {}, el('tr', {},
+          el('th', { text: '文档' }),
+          el('th', { text: '入索引词数', class: 'num', style: 'text-align:right' }),
+          el('th', { text: '上传时间' }),
+          el('th', { text: '操作' }))),
+        tbody)));
+  }
+
+  // ---------- A1：分段预览抽屉 ----------
+  function preview(group) {
+    const nodes = [
+      el('div', { class: 'chips', style: 'margin-bottom:12px' },
+        el('span', { class: 'tag brand', text: fmtNum(group.chunks.length) + ' 段' }),
+        el('span', { class: 'tag', text: fmtNum(group.tokens) + ' 词入索引' }),
+        el('span', { class: 'tag', text: '共 ' + fmtNum(group.chunks.reduce((s, c) => s + c.content.length, 0)) + ' 字' })),
+      el('div', { class: 'chunk-list' },
+        group.chunks.map(chunk => {
+          const body = el('div', { class: 'body clamp', text: chunk.content });
+          const toggle = el('button', {
+            class: 'btn sm ghost',
+            onclick: () => {
+              const clamped = body.classList.toggle('clamp');
+              toggle.textContent = clamped ? '展开' : '收起';
+            },
+          }, '展开');
+
+          return el('div', { class: 'chunk' },
+            el('div', { class: 'meta' },
+              el('span', { class: 'tag', text: '第 ' + (chunk.chunk_index + 1) + ' 段' }),
+              el('span', { class: 'tag', text: fmtNum(chunk.token_count) + ' 词' }),
+              el('span', { class: 'tag', text: fmtNum(chunk.content.length) + ' 字' }),
+              el('span', { class: 'mono', text: '[doc:' + chunk.id + ']' }),
+              toggle,
+              el('button', {
+                class: 'btn sm ghost',
+                onclick: () => copyCitation(chunk),
+              }, '复制引用')),
+            body);
+        })),
+    ];
+    openDrawer(group.title, '切段后实际进检索的最小单位', nodes);
+  }
+
+  async function copyCitation(chunk) {
+    const marker = '[doc:' + chunk.id + ']';
+    try {
+      await navigator.clipboard.writeText(marker);
+      toast('已复制 ' + marker, 'ok');
+    } catch (err) {
+      toast('复制失败，请手动选中 ' + marker, 'bad');
+    }
+  }
+
+  // ---------- 上传 ----------
+  function openUpload() {
+    const titleInput = el('input', { class: 'input', placeholder: '例如：值班手册' });
+    const contentInput = el('textarea', {
+      class: 'input', rows: '12', style: 'min-height:220px',
+      placeholder: '粘贴纯文本内容，会按 400 字切段（不切在句子中间）',
+    });
+    const counter = el('div', { class: 'counter', text: '0 字' });
+    contentInput.addEventListener('input', () => {
+      counter.textContent = fmtNum(contentInput.value.length) + ' 字';
+    });
+    const hint = el('div', { class: 'msg' });
+
+    const submit = el('button', {
+      class: 'btn primary',
+      onclick: async () => {
+        const title = titleInput.value.trim();
+        const content = contentInput.value;
+        if (!title) { showMsg(hint, 'bad', '请填写标题'); titleInput.focus(); return; }
+        if (!content.trim()) { showMsg(hint, 'bad', '请粘贴文档内容'); contentInput.focus(); return; }
+
+        submit.disabled = true;
+        submit.textContent = '上传中…';
+        const r = await API.post('/api/kbs/' + KB_ID + '/documents', { title, content });
+        submit.disabled = false;
+        submit.textContent = '上传并切段';
+
+        if (!r.ok) { showMsg(hint, 'bad', r.data.error || '上传失败'); return; }
+        closeDrawer();
+        toast(`「${title}」已切成 ${r.data.chunks.length} 段`, 'ok');
+        load();
+      },
+    }, '上传并切段');
+
+    openDrawer('上传文档', '纯文本即可，落库时自动切段', [
+      hint,
+      el('div', { class: 'field' },
+        el('label', { text: '标题' }), titleInput,
+        el('div', { class: 'muted', style: 'font-size:11.5px',
+          text: '同名文档会合并显示为一篇' })),
+      el('div', { class: 'field' },
+        el('label', { text: '正文' }), contentInput, counter),
+      el('div', { class: 'row', style: 'justify-content:flex-end' }, submit),
+    ]);
+    setTimeout(() => titleInput.focus(), 50);
+  }
+
+  async function load() {
+    const [kbRes, docsRes] = await Promise.all([
+      API.get('/api/kbs/' + KB_ID),
+      API.get('/api/kbs/' + KB_ID + '/documents?tokens=1'),
+    ]);
+
+    if (!kbRes.ok) {
+      showMsg(msg, 'bad', kbRes.data.error || '知识库不存在');
+      docList.replaceChildren();
+      return;
+    }
+    if (!docsRes.ok) {
+      showMsg(msg, 'bad', docsRes.data.error || '文档加载失败');
+      docList.replaceChildren();
+      return;
+    }
+    clearMsg(msg);
+
+    groups = groupByTitle(docsRes.data || []);
+    renderHeader(kbRes.data);
+    renderDocs();
+  }
+
+  uploadBtn.addEventListener('click', openUpload);
+  docFilter.addEventListener('input', renderDocs);
+  load();
+})();
+</script>
+{% endblock %}

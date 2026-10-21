@@ -1,215 +1,570 @@
 <!doctype html>
 <html lang="zh-CN">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}企业知识库{% endblock %}</title>
-  {# 🔴 不引 CDN：RMB03 踩过 CDN 拉不到就静默空白的坑。样式全部内联。 #}
-  <style>
-    :root {
-      --bg: #f6f7f9; --panel: #fff; --line: #e3e6ea;
-      --text: #1f2328; --muted: #656d76; --brand: #2563eb;
-      --ok: #1a7f37; --warn: #9a6700; --bad: #cf222e;
-      --radius: 8px;
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}企业知识库{% endblock %} · 企业 AI 知识库</title>
+<style>
+  :root{
+    --bg:#f5f7fa; --panel:#ffffff; --line:#e4e8f0; --line-2:#eef1f6;
+    --text:#1b2230; --muted:#6b7688; --faint:#98a2b3;
+    --brand:#2563eb; --brand-soft:#eef3ff;
+    --ok:#12805c; --ok-soft:#e6f6ef;
+    --warn:#a16207; --warn-soft:#fdf6d8;
+    --bad:#c0392b; --bad-soft:#fdeceb;
+    --radius:12px; --radius-sm:8px;
+    --shadow:0 1px 2px rgba(16,24,40,.04), 0 8px 24px -12px rgba(16,24,40,.18);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--text);
+    font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",
+         "Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  a{color:var(--brand); text-decoration:none}
+  a:hover{text-decoration:underline}
+  h1,h2,h3,h4{margin:0; font-weight:600; letter-spacing:-.01em}
+  h1{font-size:20px} h2{font-size:16px} h3{font-size:14px}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12.5px}
+  .muted{color:var(--muted)}
+  .faint{color:var(--faint)}
+  .tiny{font-size:11.5px; color:var(--faint)}
+  .nowrap{white-space:nowrap}
+
+  /* ---------- 骨架：左栏 + 内容 ---------- */
+  .shell{display:flex; min-height:100vh}
+  .side{
+    width:236px; flex:0 0 236px; background:var(--panel);
+    border-right:1px solid var(--line); position:sticky; top:0; height:100vh;
+    display:flex; flex-direction:column; z-index:30;
+  }
+  .side-brand{
+    display:flex; align-items:center; gap:10px; padding:16px 16px 12px;
+  }
+  .logo{
+    width:28px; height:28px; border-radius:8px; flex:0 0 28px;
+    background:linear-gradient(135deg,#2563eb,#1e40af);
+    display:grid; place-items:center; color:#fff; font-weight:700; font-size:13px;
+  }
+  .side-brand b{font-size:14px; font-weight:600; display:block; line-height:1.2}
+  .side-brand small{color:var(--faint); font-size:11px}
+  .side-nav{flex:1; padding:4px 8px 8px; overflow-y:auto}
+  .nav-group{margin-bottom:12px}
+  .nav-label{
+    display:block; padding:8px 10px 4px; font-size:11px; letter-spacing:.06em;
+    color:var(--faint); text-transform:uppercase;
+  }
+  .nav-item{
+    display:flex; align-items:center; gap:9px; padding:8px 10px; margin:1px 0;
+    border-radius:var(--radius-sm); color:#374151; font-size:13.5px;
+    white-space:nowrap;
+  }
+  .nav-item:hover{background:var(--bg); text-decoration:none; color:var(--text)}
+  .nav-item.on{background:var(--brand-soft); color:var(--brand); font-weight:500}
+  .nav-item svg{width:16px; height:16px; flex:0 0 16px; stroke:currentColor;
+    fill:none; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round}
+  .side-foot{
+    border-top:1px solid var(--line-2); padding:10px 14px; font-size:12px;
+    color:var(--faint); display:flex; align-items:center; gap:8px;
+  }
+  .main{flex:1; min-width:0; display:flex; flex-direction:column}
+  .topbar{
+    height:56px; flex:0 0 56px; background:rgba(255,255,255,.9);
+    backdrop-filter:saturate(180%) blur(8px);
+    border-bottom:1px solid var(--line); position:sticky; top:0; z-index:20;
+    display:flex; align-items:center; justify-content:space-between;
+    padding:0 22px; gap:12px;
+  }
+  .crumb{display:flex; align-items:center; gap:8px; min-width:0}
+  .crumb b{font-weight:600; font-size:15px}
+  .crumb .sep{color:var(--faint)}
+  .who{display:flex; align-items:center; gap:10px; font-size:13px; color:var(--muted)}
+  .avatar{
+    width:26px; height:26px; border-radius:50%; background:var(--brand-soft);
+    color:var(--brand); display:grid; place-items:center; font-size:12px;
+    font-weight:600; flex:0 0 26px;
+  }
+  .page{padding:22px; width:100%; max-width:1180px; margin:0 auto}
+
+  /* ---------- 通用控件 ---------- */
+  .card{
+    background:var(--panel); border:1px solid var(--line);
+    border-radius:var(--radius); padding:18px; box-shadow:var(--shadow);
+  }
+  .card + .card{margin-top:14px}
+  .card-head{
+    display:flex; align-items:center; justify-content:space-between;
+    gap:12px; margin-bottom:14px; flex-wrap:wrap;
+  }
+  .card-head .sub{font-size:12.5px; color:var(--muted); margin-top:2px}
+  .grid{display:grid; gap:14px}
+  .grid.two{grid-template-columns:1fr 1fr}
+  .grid.three{grid-template-columns:repeat(3,1fr)}
+  .grid.kpi{grid-template-columns:repeat(4,1fr)}
+  .row{display:flex; align-items:center; gap:8px; flex-wrap:wrap}
+  .spread{display:flex; align-items:center; justify-content:space-between; gap:12px}
+  .hr{height:1px; background:var(--line-2); margin:14px 0; border:0}
+
+  .btn{
+    appearance:none; border:1px solid var(--line); background:#fff; color:var(--text);
+    padding:7px 13px; border-radius:var(--radius-sm); font-size:13px;
+    font-family:inherit; cursor:pointer; white-space:nowrap; line-height:1.4;
+    transition:background .15s,border-color .15s,opacity .15s;
+  }
+  .btn:hover{background:var(--bg)}
+  .btn:disabled{opacity:.55; cursor:not-allowed}
+  .btn.primary{background:var(--brand); border-color:var(--brand); color:#fff}
+  .btn.primary:hover{background:#1d4fd7}
+  .btn.ghost{border-color:transparent; background:transparent; color:var(--muted)}
+  .btn.ghost:hover{background:var(--bg); color:var(--text)}
+  .btn.danger{color:var(--bad); border-color:#f0c9c5}
+  .btn.danger:hover{background:var(--bad-soft)}
+  .btn.sm{padding:4px 9px; font-size:12px}
+  .btn.block{width:100%; justify-content:center}
+
+  .field{display:flex; flex-direction:column; gap:5px; margin-bottom:12px}
+  .field label{font-size:12.5px; color:var(--muted); font-weight:500}
+  .input,.select,textarea.input{
+    width:100%; padding:8px 10px; border:1px solid var(--line);
+    border-radius:var(--radius-sm); font:inherit; font-size:13.5px;
+    background:#fff; color:var(--text); outline:none;
+  }
+  .input:focus,.select:focus,textarea.input:focus{
+    border-color:var(--brand); box-shadow:0 0 0 3px rgba(37,99,235,.12);
+  }
+  textarea.input{resize:vertical; min-height:96px; line-height:1.7}
+  .inline-form{display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end}
+  .inline-form .field{margin-bottom:0; flex:1 1 140px}
+
+  .msg{
+    border-radius:var(--radius-sm); padding:9px 12px; font-size:13px;
+    margin-bottom:12px; border:1px solid transparent; line-height:1.6;
+  }
+  .msg:empty{display:none}
+  .msg.ok{background:var(--ok-soft); color:#0f6b4c; border-color:#bfe8d6}
+  .msg.warn{background:var(--warn-soft); color:#7a4d05; border-color:#f0e0a0}
+  .msg.bad{background:var(--bad-soft); color:#96271c; border-color:#f5c6c1}
+  .msg.info{background:var(--brand-soft); color:#1e40af; border-color:#c7d8fb}
+
+  .tag{
+    display:inline-flex; align-items:center; gap:4px; font-size:11.5px;
+    padding:1px 8px; border-radius:999px; background:var(--bg); color:var(--muted);
+    border:1px solid var(--line); white-space:nowrap; line-height:1.7;
+  }
+  .tag.brand{background:var(--brand-soft); color:var(--brand); border-color:#c7d8fb}
+  .tag.ok{background:var(--ok-soft); color:var(--ok); border-color:#bfe8d6}
+  .tag.warn{background:var(--warn-soft); color:var(--warn); border-color:#f0e0a0}
+  .tag.bad{background:var(--bad-soft); color:var(--bad); border-color:#f5c6c1}
+  .chips{display:flex; gap:6px; flex-wrap:wrap}
+
+  .stat{display:flex; gap:26px; flex-wrap:wrap}
+  .stat>div{min-width:96px}
+  .stat .num{font-size:22px; font-weight:600; line-height:1.25; letter-spacing:-.02em}
+  .stat .lbl{font-size:12px; color:var(--muted)}
+  .kpi{
+    background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
+    padding:14px 16px;
+  }
+  .kpi .num{font-size:23px; font-weight:600; letter-spacing:-.02em; line-height:1.3}
+  .kpi .lbl{font-size:12px; color:var(--muted)}
+  .kpi .hint{font-size:11.5px; color:var(--faint); margin-top:2px}
+
+  .bar{height:6px; background:var(--line); border-radius:999px; overflow:hidden}
+  .bar>i{display:block; height:100%; background:var(--brand); border-radius:999px;
+    transition:width .4s ease}
+  .bar.warn>i{background:#e0a800}
+  .bar.bad>i{background:var(--bad)}
+
+  table.table{width:100%; border-collapse:collapse; font-size:13px}
+  .table th{
+    text-align:left; font-weight:500; color:var(--muted); font-size:12px;
+    padding:8px 10px; border-bottom:1px solid var(--line); white-space:nowrap;
+    background:var(--panel); position:sticky; top:0;
+  }
+  .table td{padding:9px 10px; border-bottom:1px solid var(--line-2); vertical-align:middle}
+  .table tr:last-child td{border-bottom:none}
+  .table tbody tr:hover{background:#fafbff}
+  .table td.num{text-align:right; font-variant-numeric:tabular-nums}
+  .table-wrap{overflow-x:auto; margin:0 -4px}
+
+  .ref{
+    border-left:3px solid var(--brand); background:#f8faff;
+    padding:9px 12px; border-radius:0 var(--radius-sm) var(--radius-sm) 0;
+    margin-bottom:8px;
+  }
+  .ref .src{font-size:12.5px; color:var(--brand); font-weight:500}
+  .ref .txt{font-size:12.5px; color:var(--muted); margin-top:3px; line-height:1.65}
+
+  .answer{white-space:pre-wrap; line-height:1.8; font-size:14px}
+  .kv{display:grid; grid-template-columns:96px 1fr; gap:8px 12px; font-size:13px}
+  .kv dt{color:var(--muted)}
+  .kv dd{margin:0}
+
+  .empty{
+    text-align:center; padding:34px 16px; color:var(--muted); font-size:13px;
+    border:1px dashed var(--line); border-radius:var(--radius); background:#fcfdff;
+  }
+  .empty b{display:block; color:var(--text); font-size:14px; margin-bottom:4px}
+  .empty .btn{margin-top:12px}
+
+  .pager{display:flex; align-items:center; gap:8px; justify-content:flex-end;
+    margin-top:12px; font-size:12.5px; color:var(--muted)}
+
+  .seg{display:inline-flex; border:1px solid var(--line); border-radius:var(--radius-sm);
+    overflow:hidden; background:#fff}
+  .seg button{
+    appearance:none; border:0; background:transparent; padding:5px 11px;
+    font:inherit; font-size:12.5px; color:var(--muted); cursor:pointer;
+  }
+  .seg button.on{background:var(--brand); color:#fff}
+
+  /* ---------- 抽屉：文档分段预览 ---------- */
+  .drawer-mask{
+    position:fixed; inset:0; background:rgba(16,24,40,.38); z-index:60;
+    opacity:0; pointer-events:none; transition:opacity .18s;
+  }
+  .drawer{
+    position:fixed; top:0; right:0; height:100vh; width:min(560px,100%);
+    background:var(--panel); z-index:61; box-shadow:-16px 0 40px -20px rgba(16,24,40,.4);
+    transform:translateX(100%); transition:transform .22s ease;
+    display:flex; flex-direction:column;
+  }
+  .drawer.open{transform:none}
+  .drawer-mask.open{opacity:1; pointer-events:auto}
+  .drawer-head{
+    padding:14px 18px; border-bottom:1px solid var(--line);
+    display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
+  }
+  .drawer-body{padding:16px 18px; overflow-y:auto; flex:1}
+  .seg-item{
+    border:1px solid var(--line); border-radius:var(--radius-sm); padding:10px 12px;
+    margin-bottom:8px; background:#fff;
+  }
+  .seg-item .meta{
+    display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+    font-size:11.5px; color:var(--faint); margin-bottom:5px;
+  }
+  .seg-item .body{white-space:pre-wrap; font-size:13px; line-height:1.7}
+
+  /* ---------- 浮动提示 ---------- */
+  .toast-wrap{position:fixed; top:14px; left:50%; transform:translateX(-50%);
+    z-index:80; display:flex; flex-direction:column; gap:8px; align-items:center;
+    pointer-events:none}
+  .toast{
+    background:#1b2230; color:#fff; padding:8px 15px; border-radius:999px;
+    font-size:13px; box-shadow:0 10px 30px -12px rgba(0,0,0,.5);
+    animation:drop .18s ease; max-width:90vw;
+  }
+  .toast.bad{background:#9b2c1f}
+  .toast.ok{background:#126b4d}
+  @keyframes drop{from{opacity:0; transform:translateY(-6px)} to{opacity:1}}
+
+  .hidden{display:none !important}
+  .skel{height:12px; background:linear-gradient(90deg,#eef1f6,#f7f9fc,#eef1f6);
+    border-radius:6px; animation:pulse 1.2s infinite}
+  @keyframes pulse{50%{opacity:.55}}
+
+  /* ---------- 窄屏：左栏变顶栏 ---------- */
+  @media (max-width:860px){
+    .shell{display:block}
+    .side{
+      width:auto; flex:none; height:auto; position:sticky; top:0;
+      flex-direction:row; align-items:center; gap:6px; padding:6px 10px;
+      border-right:0; border-bottom:1px solid var(--line); overflow-x:auto;
     }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0; background: var(--bg); color: var(--text);
-      font: 15px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
-    }
-    a { color: var(--brand); text-decoration: none; }
-    header.topbar {
-      background: var(--panel); border-bottom: 1px solid var(--line);
-      padding: 0 24px; display: flex; align-items: center; gap: 20px;
-      height: 56px; position: sticky; top: 0; z-index: 10;
-    }
-    .brand { font-weight: 600; font-size: 16px; }
-    nav.links { display: flex; gap: 4px; flex: 1; }
-    nav.links a {
-      padding: 6px 12px; border-radius: 6px; color: var(--muted); font-size: 14px;
-    }
-    nav.links a:hover { background: var(--bg); color: var(--text); }
-    nav.links a.active { background: #eef2ff; color: var(--brand); font-weight: 500; }
-    .who { font-size: 13px; color: var(--muted); display: flex; gap: 12px; align-items: center; }
-    .role-tag {
-      background: #eef2ff; color: var(--brand); padding: 2px 8px;
-      border-radius: 10px; font-size: 12px;
-    }
-    main.page { max-width: 1080px; margin: 0 auto; padding: 24px; }
-    .card {
-      background: var(--panel); border: 1px solid var(--line);
-      border-radius: var(--radius); padding: 20px; margin-bottom: 16px;
-    }
-    .card h2 { margin: 0 0 14px; font-size: 15px; font-weight: 600; }
-    .grid { display: grid; gap: 16px; }
-    .grid.two { grid-template-columns: 1fr 1fr; }
-    @media (max-width: 760px) { .grid.two { grid-template-columns: 1fr; } }
-    label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
-    input[type=text], input[type=password], textarea, select {
-      width: 100%; padding: 8px 10px; border: 1px solid var(--line);
-      border-radius: 6px; font: inherit; background: #fff; color: var(--text);
-    }
-    textarea { resize: vertical; }
-    input:focus, textarea:focus, select:focus {
-      outline: 2px solid #c7d7fe; outline-offset: 0; border-color: var(--brand);
-    }
-    button {
-      padding: 8px 16px; border-radius: 6px; border: 1px solid var(--line);
-      background: var(--panel); font: inherit; cursor: pointer; color: var(--text);
-    }
-    button:hover { background: var(--bg); }
-    button.primary { background: var(--brand); border-color: var(--brand); color: #fff; }
-    button.primary:hover { background: #1d4ed8; }
-    button.danger { color: var(--bad); }
-    button:disabled { opacity: .55; cursor: not-allowed; }
-    .row { display: flex; gap: 10px; align-items: center; }
-    .row.end { justify-content: flex-end; }
-    .muted { color: var(--muted); font-size: 13px; }
-    .empty { color: var(--muted); padding: 18px 0; text-align: center; }
-    .msg { padding: 10px 12px; border-radius: 6px; font-size: 14px; margin-bottom: 14px; }
-    .msg.err { background: #ffebe9; color: var(--bad); border: 1px solid #ffcecb; }
-    .msg.ok  { background: #dafbe1; color: var(--ok); border: 1px solid #aceebb; }
-    .msg.warn{ background: #fff8c5; color: var(--warn); border: 1px solid #f0e08a; }
-    table { width: 100%; border-collapse: collapse; font-size: 14px; }
-    th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); }
-    th { color: var(--muted); font-weight: 500; font-size: 13px; }
-    tbody tr:last-child td { border-bottom: none; }
-    .stat { display: flex; gap: 28px; flex-wrap: wrap; }
-    .stat > div { min-width: 110px; }
-    .stat .num { font-size: 24px; font-weight: 600; line-height: 1.2; }
-    .stat .lbl { font-size: 12px; color: var(--muted); }
-    .bar { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; }
-    .bar > i { display: block; height: 100%; background: var(--brand); }
-    .ref {
-      border-left: 3px solid var(--brand); background: #f8faff;
-      padding: 10px 12px; border-radius: 0 6px 6px 0; margin-bottom: 8px;
-    }
-    .ref .src { font-size: 13px; color: var(--brand); font-weight: 500; }
-    .ref .txt { font-size: 13px; color: var(--muted); margin-top: 4px; }
-    .chips { display: flex; gap: 8px; flex-wrap: wrap; }
-    .chip {
-      background: var(--bg); border: 1px solid var(--line);
-      border-radius: 14px; padding: 3px 10px; font-size: 13px; cursor: pointer;
-    }
-    .chip:hover { background: #eef2ff; border-color: var(--brand); color: var(--brand); }
-    .answer { white-space: pre-wrap; line-height: 1.75; }
-    .badge { font-size: 12px; padding: 1px 7px; border-radius: 9px; }
-    .badge.deg { background: #fff8c5; color: var(--warn); }
-    .badge.ok  { background: #dafbe1; color: var(--ok); }
-    .badge.off { background: #ffebe9; color: var(--bad); }
-    .hidden { display: none !important; }
-  </style>
+    .side-brand{padding:0 8px 0 2px; flex:0 0 auto}
+    .side-brand small,.nav-label{display:none}
+    .side-nav{display:flex; align-items:center; gap:2px; padding:0; overflow:visible}
+    .nav-group{display:flex; align-items:center; margin:0}
+    .nav-item{padding:6px 9px; font-size:12.5px; white-space:nowrap}
+    .side{scrollbar-width:none}
+    .side::-webkit-scrollbar{display:none}
+    .side-foot{display:none}
+    .topbar{padding:0 12px; height:48px; flex-basis:48px; gap:8px}
+    .crumb{flex:1 1 auto; overflow:hidden; gap:0}
+    .crumb b{font-size:14px; white-space:nowrap}
+    .crumb .sep,.crumb .muted{display:none}
+    .who{gap:7px; flex:0 0 auto}
+    .who .role-tag,.who .who-name{display:none}
+    .page{padding:14px}
+    .grid.two,.grid.three{grid-template-columns:1fr}
+    /* KPI 在手机上两列：一列四个太高，翻半天才看到正文 */
+    .grid.kpi{grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px}
+    .kpi{padding:12px}
+    .kpi .num{font-size:19px}
+    .kv{grid-template-columns:84px 1fr}
+  }
+</style>
+{% block head %}{% endblock %}
 </head>
 <body>
-  <header class="topbar">
-    <span class="brand">企业知识库</span>
-    <nav class="links" id="nav"></nav>
-    <span class="who" id="who"></span>
-  </header>
-  <main class="page">
-    {% block body %}{% endblock %}
-  </main>
+<div class="shell">
+  <aside class="side">
+    <div class="side-brand">
+      <span class="logo">知</span>
+      <span>
+        <b>企业 AI 知识库</b>
+        <small>RMB01 · 多租户 SaaS</small>
+      </span>
+    </div>
+    <nav class="side-nav" id="nav"></nav>
+    <div class="side-foot">
+      <span id="quota-chip" class="muted">额度读取中…</span>
+    </div>
+  </aside>
 
-  <script>
-    // 🔴 只用一个共享小工具，不引任何第三方库
-    const API = {
-      async req(method, url, body) {
-        const opts = { method, headers: {}, credentials: 'same-origin' };
-        if (body !== undefined) {
-          opts.headers['Content-Type'] = 'application/json';
-          opts.body = JSON.stringify(body);
-        }
-        const res = await fetch(url, opts);
-        let data = null;
-        try { data = await res.json(); } catch (e) { /* 空响应 */ }
-        return { ok: res.ok, status: res.status, data };
-      },
-      get(url) { return API.req('GET', url); },
-      post(url, body) { return API.req('POST', url, body); },
-      put(url, body) { return API.req('PUT', url, body); },
-      del(url) { return API.req('DELETE', url); },
-    };
+  <div class="main">
+    <header class="topbar">
+      <div class="crumb">
+        <b>{% block page_title %}知识库{% endblock %}</b>
+        <span class="sep">/</span>
+        <span class="muted">{% block page_sub %}{% endblock %}</span>
+      </div>
+      <div class="who" id="who"></div>
+    </header>
+    <main class="page">{% block body %}{% endblock %}</main>
+  </div>
+</div>
 
-    const ROLE_LABELS = {
-      platform_admin: '平台管理员',
-      org_admin: '企业管理员',
-      member: '成员',
-      viewer: '只读',
-    };
+<div class="drawer-mask" id="drawer-mask"></div>
+<aside class="drawer" id="drawer">
+  <div class="drawer-head">
+    <div>
+      <h2 id="drawer-title">详情</h2>
+      <div class="muted" id="drawer-sub" style="font-size:12.5px;margin-top:2px"></div>
+    </div>
+    <button class="btn ghost sm" id="drawer-close">关闭</button>
+  </div>
+  <div class="drawer-body" id="drawer-body"></div>
+</aside>
+<div class="toast-wrap" id="toasts"></div>
 
-    function el(tag, attrs, ...children) {
-      const node = document.createElement(tag);
-      for (const [k, v] of Object.entries(attrs || {})) {
-        if (k === 'class') node.className = v;
-        else if (k === 'text') node.textContent = v;
-        else if (k.startsWith('on')) node.addEventListener(k.slice(2), v);
-        else node.setAttribute(k, v);
+<script>
+  // ============ 共享小工具（不引任何第三方库） ============
+  const API = {
+    async req(method, url, body) {
+      const opts = { method, headers: {}, credentials: 'same-origin' };
+      if (body !== undefined) {
+        opts.headers['Content-Type'] = 'application/json';
+        opts.body = JSON.stringify(body);
       }
-      for (const c of children) {
-        if (c == null) continue;
-        node.append(c.nodeType ? c : document.createTextNode(String(c)));
+      let res, data = null;
+      try {
+        res = await fetch(url, opts);
+      } catch (e) {
+        return { ok: false, status: 0, data: { error: '网络异常，请检查服务是否还在运行' } };
       }
-      return node;
+      try { data = await res.json(); } catch (e) { /* 空响应 / 非 JSON */ }
+      return { ok: res.ok, status: res.status, data };
+    },
+    get(url) { return API.req('GET', url); },
+    post(url, body) { return API.req('POST', url, body); },
+    put(url, body) { return API.req('PUT', url, body); },
+    del(url) { return API.req('DELETE', url); },
+  };
+
+  const ROLE_LABELS = {
+    platform_admin: '平台管理员',
+    org_admin: '企业管理员',
+    member: '成员',
+    viewer: '只读',
+  };
+
+  // 🔴 只做 DOM 拼装，不拼 HTML 字符串 —— 文本一律走 textContent，
+  //    用户输入（库名、问题、文档内容）不会被当成 HTML 执行。
+  function el(tag, attrs, ...children) {
+    const node = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (v === null || v === undefined || v === false) continue;
+      if (k === 'class') node.className = v;
+      else if (k === 'text') node.textContent = v;
+      else if (k === 'html') node.innerHTML = v;          // 只给写死的图标用
+      else if (k.startsWith('on')) node.addEventListener(k.slice(2), v);
+      else if (k === 'disabled' || k === 'checked') node[k] = !!v;
+      else node.setAttribute(k, v);
+    }
+    for (const c of children.flat()) {
+      if (c === null || c === undefined || c === false) continue;
+      node.append(c.nodeType ? c : document.createTextNode(String(c)));
+    }
+    return node;
+  }
+
+  function showMsg(container, kind, text) {
+    container.replaceChildren(el('div', { class: 'msg ' + kind, text }));
+  }
+  function clearMsg(container) { container.replaceChildren(); }
+
+  function toast(text, kind) {
+    const node = el('div', { class: 'toast ' + (kind || ''), text });
+    const wrap = document.getElementById('toasts');
+    wrap.append(node);
+    setTimeout(() => { node.style.opacity = '0'; }, 2400);
+    setTimeout(() => { node.remove(); }, 2800);
+    return node;
+  }
+
+  function fmtNum(n) {
+    if (n === null || n === undefined || n === '') return '—';
+    return Number(n).toLocaleString('zh-CN');
+  }
+  function pct(part, total) {
+    if (!total) return 0;
+    return Math.round((part / total) * 1000) / 10;
+  }
+  function fmtTime(s) {
+    if (!s) return '—';
+    return String(s).replace('T', ' ').slice(0, 16);
+  }
+
+  function emptyState(title, desc, action) {
+    return el('div', { class: 'empty' },
+      el('b', { text: title }),
+      desc ? el('div', { text: desc }) : null,
+      action || null);
+  }
+
+  function icon(paths) {
+    return '<svg viewBox="0 0 24 24" aria-hidden="true">' + paths + '</svg>';
+  }
+
+  const ICONS = {
+    kbs: icon('<path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H19v15H6.5A2.5 2.5 0 0 0 4 20.5z"/><path d="M4 18.5V5.5"/>'),
+    compare: icon('<path d="M12 3v18"/><path d="M4 7h5M4 12h5M4 17h5"/><path d="M15 7h5M15 12h5M15 17h5"/>'),
+    org: icon('<path d="M4 21V6a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v15"/><path d="M15 11h3a2 2 0 0 1 2 2v8"/><path d="M2 21h20"/><path d="M8 8h3M8 12h3M8 16h3"/>'),
+    usage: icon('<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>'),
+    platform: icon('<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>'),
+    me: icon('<circle cx="12" cy="8" r="3.6"/><path d="M4.5 20a7.5 7.5 0 0 1 15 0"/>'),
+  };
+
+  // 🔴 菜单显示什么和服务端放行什么必须是同一套规则 ——
+  //    这条规则在 tests/test_pages.py 里有断言盯着（permissions.includes）。
+  async function renderChrome(activePath) {
+    const nav = document.getElementById('nav');
+    const who = document.getElementById('who');
+    const me = await API.get('/api/auth/me');
+
+    if (!me.ok) {
+      nav.replaceChildren();
+      who.replaceChildren(el('a', { href: '/login', text: '登录' }));
+      window.ME = null;
+      return null;
     }
 
-    function showMsg(container, kind, text) {
-      container.replaceChildren(el('div', { class: 'msg ' + kind, text }));
+    const user = me.data;
+    const permissions = user.permissions || [];
+    window.ME = user;
+
+    // 🔴 知识库 / 检索对比 是「租户内」页面：平台管理员没有自己的租户，
+    //    服务端会拦（pages.py 里是 403 页），菜单也就不该给入口。
+    const hasTenant = user.tenant_id !== null && user.tenant_id !== undefined;
+
+    const groups = [
+      { label: '工作台', items: [
+        { path: '/kbs', label: '知识库', icon: ICONS.kbs, show: hasTenant && permissions.includes('view_history') },
+        { path: '/compare', label: '检索对比', icon: ICONS.compare, show: hasTenant && permissions.includes('view_history') },
+      ]},
+      { label: '管理', items: [
+        { path: '/org', label: '企业后台', icon: ICONS.org, show: permissions.includes('manage_org_users') },
+        { path: '/org/usage', label: '用量明细', icon: ICONS.usage, show: permissions.includes('manage_org_users') },
+        { path: '/platform', label: '平台后台', icon: ICONS.platform, show: permissions.includes('cross_tenant') },
+      ]},
+    ];
+
+    const active = activePath || '';
+    const nodes = groups.map(group => {
+      const items = group.items.filter(i => i.show);
+      if (!items.length) return null;
+      return el('div', { class: 'nav-group' },
+        el('span', { class: 'nav-label', text: group.label }),
+        items.map(item => {
+          const on = active === item.path
+            || (item.path === '/kbs' && active.startsWith('/kbs'))
+            || (item.path === '/org' && active === '/org')
+            || (item.path === '/platform' && active.startsWith('/platform'));
+          return el('a', {
+            class: 'nav-item' + (on ? ' on' : ''),
+            href: item.path,
+            html: item.icon,
+          }, el('span', { text: item.label }));
+        }));
+    });
+    nodes.push(el('div', { class: 'nav-group' },
+      el('span', { class: 'nav-label', text: '账号' }),
+      el('a', {
+        class: 'nav-item' + (active === '/me' ? ' on' : ''),
+        href: '/me', html: ICONS.me,
+      }, el('span', { text: '个人中心' }))));
+    nav.replaceChildren(...nodes.filter(Boolean));
+
+    const roleLabel = ROLE_LABELS[user.role] || user.role;
+    who.replaceChildren(
+      el('span', { class: 'tag role-tag' + (user.role === 'platform_admin' ? ' brand' : ''), text: roleLabel }),
+      el('span', { class: 'avatar', text: (user.username || '?').slice(0, 1).toUpperCase() }),
+      el('span', { class: 'nowrap who-name', text: user.username }),
+      el('button', {
+        class: 'btn ghost sm',
+        onclick: async () => {
+          await API.post('/api/auth/logout');
+          location.href = '/login';
+        },
+      }, '退出'));
+
+    return user;
+  }
+
+  async function loadQuotaChip() {
+    const chip = document.getElementById('quota-chip');
+    if (!chip) return;
+    const me = window.ME;
+    if (!me || !me.tenant_id) {
+      if (me) chip.textContent = '平台视角';
+      return;
     }
+    const r = await API.get('/api/org/billing');
+    if (!r.ok || !r.data || !r.data.quota) { chip.textContent = '—'; return; }
+    const q = r.data.quota;
+    chip.replaceChildren(
+      el('span', { class: 'tag' + (q.quota_used >= q.quota_total ? ' bad' : ''), text: q.plan_name }),
+      el('span', { text: ` ${fmtNum(q.quota_used)}/${fmtNum(q.quota_total)}` }));
+  }
 
-    function clearMsg(container) { container.replaceChildren(); }
+  // ============ 抽屉 ============
+  function openDrawer(title, sub, nodes) {
+    document.getElementById('drawer-title').textContent = title || '详情';
+    document.getElementById('drawer-sub').textContent = sub || '';
+    const body = document.getElementById('drawer-body');
+    body.replaceChildren(...[].concat(nodes).filter(Boolean));
+    document.getElementById('drawer').classList.add('open');
+    document.getElementById('drawer-mask').classList.add('open');
+  }
+  function closeDrawer() {
+    document.getElementById('drawer').classList.remove('open');
+    document.getElementById('drawer-mask').classList.remove('open');
+  }
 
-    // 🔴 顶部导航按角色渲染 —— 成员看不到「企业后台」，
-    //    企业管理员看不到「平台后台」。这本身就是可讲的权限设计点。
-    async function renderChrome(activePath) {
-      const me = await API.get('/api/auth/me');
-      const nav = document.getElementById('nav');
-      const who = document.getElementById('who');
+  // ============ 确认框（用抽屉，不引第三方组件） ============
+  function confirmAction(title, text, confirmLabel) {
+    return new Promise(resolve => {
+      const done = (value) => { closeDrawer(); resolve(value); };
+      openDrawer(title, '', [
+        el('p', { class: 'muted', text, style: 'margin-top:0' }),
+        el('div', { class: 'row', style: 'justify-content:flex-end' },
+          el('button', { class: 'btn', onclick: () => done(false) }, '取消'),
+          el('button', { class: 'btn danger', onclick: () => done(true) }, confirmLabel || '确认')),
+      ]);
+    });
+  }
 
-      if (!me.ok) {
-        nav.replaceChildren();
-        who.replaceChildren(el('a', { href: '/login', text: '登录' }));
-        return null;
-      }
-
-      const user = me.data;
-      const links = [['/kbs', '知识库']];
-      // 🔴 与企业后台页面的门控保持一致（manage_org_users）——
-      //    菜单显示什么和服务端放行什么必须是同一套规则，
-      //    否则会出现「点得进去但 403」的糟糕体验。
-      if (user.permissions.includes('manage_org_users')) {
-        links.push(['/org', '企业后台']);
-      }
-      if (user.permissions.includes('cross_tenant')) {
-        links.push(['/platform', '平台后台']);
-      }
-
-      nav.replaceChildren(...links.map(([href, label]) =>
-        el('a', {
-          href, text: label,
-          class: activePath === href ? 'active' : '',
-        })
-      ));
-
-      who.replaceChildren(
-        el('span', { class: 'role-tag', text: ROLE_LABELS[user.role] || user.role }),
-        el('span', { text: user.username }),
-        el('button', {
-          text: '退出',
-          onclick: async () => {
-            await API.post('/api/auth/logout');
-            location.href = '/login';
-          },
-        }),
-      );
-      return user;
-    }
-
-    async function loadQuotaChip() {
-      const r = await API.get('/api/org/billing');
-      if (!r.ok) return null;
-      return r.data.quota;
-    }
-  </script>
-  {% block script %}{% endblock %}
+  document.addEventListener('click', (e) => {
+    if (e.target.id === 'drawer-mask' || e.target.id === 'drawer-close') closeDrawer();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeDrawer();
+  });
+</script>
+{% block script %}{% endblock %}
 </body>
 </html>

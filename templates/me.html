@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+{% block title %}个人中心{% endblock %}
+{% block page_title %}个人中心{% endblock %}
+{% block page_sub %}账号、权限与密码{% endblock %}
+
+{% block head %}
+<style>
+  .profile{display:flex; align-items:center; gap:14px; flex-wrap:wrap}
+  .profile .big-avatar{
+    width:52px; height:52px; border-radius:50%; background:var(--brand-soft);
+    color:var(--brand); display:grid; place-items:center; font-size:20px;
+    font-weight:600; flex:0 0 52px;
+  }
+  .profile .whoami b{display:block; font-size:16px; font-weight:600}
+  .profile .whoami span{font-size:12.5px; color:var(--muted)}
+  .perm-list{display:grid; grid-template-columns:repeat(auto-fill,minmax(210px,1fr));
+    gap:8px}
+  .perm{display:flex; align-items:center; gap:8px; font-size:12.5px;
+    padding:8px 10px; border:1px solid var(--line); border-radius:var(--radius-sm);
+    background:#fff; min-width:0}
+  .perm .k{font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11px;
+    color:var(--faint); margin-left:auto; white-space:nowrap}
+  .form-narrow{max-width:360px; display:flex; flex-direction:column; gap:10px}
+</style>
+{% endblock %}
+
+{% block body %}
+<div class="card">
+  <div class="profile">
+    <div class="big-avatar" id="avatar">?</div>
+    <div class="whoami" style="min-width:0">
+      <b id="username">加载中…</b>
+      <span id="role-line"></span>
+    </div>
+    <div class="row" style="margin-left:auto">
+      <button class="btn" id="btn-logout">退出登录</button>
+    </div>
+  </div>
+  <div class="hr"></div>
+  <div class="kv" id="profile-kv"></div>
+</div>
+
+<div class="grid two" style="margin-top:14px">
+  <div class="card">
+    <div class="card-head" style="margin-bottom:10px">
+      <div>
+        <h2>我的权限</h2>
+        <div class="sub" id="perm-sub">角色决定能做什么</div>
+      </div>
+    </div>
+    <div class="perm-list" id="perms"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-head" style="margin-bottom:10px">
+      <div>
+        <h2>修改密码</h2>
+        <div class="sub">改完当前会话仍然有效</div>
+      </div>
+    </div>
+    <div id="msg"></div>
+    <div class="form-narrow">
+      <div class="field">
+        <label>当前密码</label>
+        <input class="input" id="old-pass" type="password" autocomplete="current-password">
+      </div>
+      <div class="field">
+        <label>新密码</label>
+        <input class="input" id="new-pass" type="password" autocomplete="new-password">
+        <div class="tiny">至少 6 位，不能和原密码相同</div>
+      </div>
+      <div class="field">
+        <label>再输一次</label>
+        <input class="input" id="new-pass2" type="password" autocomplete="new-password">
+      </div>
+      <button class="btn primary block" id="btn-pass">保存新密码</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block script %}
+<script>
+(async () => {
+  const me = await renderChrome('/me');
+  if (!me) { location.href = '/login'; return; }
+  await loadQuotaChip();
+
+  // 权限点 → 人话（与 pages.py 的 PERMISSION_LABELS 同一套）
+  const PERM_LABELS = {
+    manage_kb: '建库 / 删库',
+    upload_doc: '上传文档',
+    ask: '发起问答',
+    view_history: '查看历史',
+    manage_org_users: '成员管理',
+    cross_tenant: '跨租户查看',
+    manage_tenants: '租户管理',
+    manage_billing: '套餐计费',
+    view_all_usage: '全局用量',
+  };
+
+  const msg = document.getElementById('msg');
+  const btnPass = document.getElementById('btn-pass');
+
+  function renderProfile(profile) {
+    document.getElementById('avatar').textContent =
+      (profile.username || '?').slice(0, 1).toUpperCase();
+    document.getElementById('username').textContent = profile.username;
+    document.getElementById('role-line').textContent =
+      `${profile.role_label} · ${profile.tenant_name || '不属于任何租户'}`;
+    document.title = profile.username + ' · 个人中心';
+
+    document.getElementById('profile-kv').replaceChildren(
+      el('dt', { text: '角色' }),
+      el('dd', {}, el('span', { class: 'tag brand', text: profile.role_label })),
+      el('dt', { text: '所属租户' }),
+      el('dd', { text: profile.tenant_name || '平台账号（不属于任何租户）' }),
+      el('dt', { text: 'tenant_id' }),
+      el('dd', { class: 'mono', text: String(profile.tenant_id ?? '—') }),
+      el('dt', { text: '加入时间' }),
+      el('dd', { text: fmtTime(profile.created_at) }));
+
+    const perms = profile.permissions || [];
+    document.getElementById('perm-sub').textContent =
+      `${profile.role_label} 共 ${perms.length} 项权限`;
+
+    document.getElementById('perms').replaceChildren(...perms.map(code => el('div',
+      { class: 'perm' },
+      el('span', { class: 'tag ok', text: '✓' }),
+      el('span', { text: PERM_LABELS[code] || code }),
+      el('span', { class: 'k', text: code }))));
+  }
+
+  async function changePassword() {
+    const oldPass = document.getElementById('old-pass').value;
+    const newPass = document.getElementById('new-pass').value;
+    const newPass2 = document.getElementById('new-pass2').value;
+
+    if (!oldPass || !newPass) { showMsg(msg, 'bad', '三个框都要填'); return; }
+    if (newPass.length < 6) { showMsg(msg, 'bad', '新密码至少 6 位'); return; }
+    if (newPass !== newPass2) { showMsg(msg, 'bad', '两次输入的新密码不一致'); return; }
+
+    btnPass.disabled = true;
+    const r = await API.post('/api/auth/change-password', {
+      old_password: oldPass, new_password: newPass,
+    });
+    btnPass.disabled = false;
+
+    if (!r.ok) { showMsg(msg, 'bad', r.data.error || '修改失败'); return; }
+    showMsg(msg, 'ok', '密码已更新');
+    document.getElementById('old-pass').value = '';
+    document.getElementById('new-pass').value = '';
+    document.getElementById('new-pass2').value = '';
+  }
+
+  document.getElementById('btn-logout').addEventListener('click', async () => {
+    await API.post('/api/auth/logout');
+    location.href = '/login';
+  });
+  btnPass.addEventListener('click', changePassword);
+
+  const r = await API.get('/api/auth/profile');
+  if (!r.ok) { showMsg(msg, 'bad', r.data.error || '账号信息加载失败'); return; }
+  renderProfile(r.data);
+})();
+</script>
+{% endblock %}

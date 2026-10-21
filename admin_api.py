@@ -8,6 +8,7 @@
     且它的跨租户能力必须由权限矩阵显式授予（cross_tenant）
   · 两类后台的接口不共用：企业管理员调运营接口 → 403
 """
+import datetime
 import logging
 import re
 
@@ -27,9 +28,11 @@ from models import (
     ROLE_ORG_ADMIN,
     ROLE_PLATFORM_ADMIN,
     ROLE_VIEWER,
+    Document,
     Kb,
     Subscription,
     Tenant,
+    Usage,
     User,
     db,
 )
@@ -148,6 +151,106 @@ def org_add_member(username, password, role):
     return user, None
 
 
+def org_delete_member(user_id):
+    """企业管理员移除**本租户**成员。返回 (result, error)。
+
+    与改角色同一套口径：跨租户 / 不存在 → (None, None) → 上层 404。
+
+    两条护栏（都是「删完才发现」的类型）：
+      · 不能删自己 —— 删完自己就登不进去了，只能让平台管理员来救
+      · 不能删掉最后一个企业管理员 —— 否则这个租户再没人能管成员，
+        而平台管理员并没有「进租户内改角色」的入口
+    """
+
+    tenant_id = _tenant_id()
+    if tenant_id is None:
+        return None, None
+
+    target = fetch_scoped(User, user_id)      # 🔴 跨租户 → None → 404
+    if target is None or target.tenant_id != tenant_id:
+        return None, None
+
+    me = current_user()
+    if me is not None and target.id == me.id:
+        return None, '不能删除自己的账号'
+
+    if target.role == ROLE_ORG_ADMIN:
+        admins = scoped(User, tenant_id).filter_by(role=ROLE_ORG_ADMIN).count()
+        if admins <= 1:
+            return None, '租户至少要保留一个企业管理员'
+
+    username = target.username
+    db.session.delete(target)
+    db.session.commit()
+
+    logger.info('member_removed', extra={
+        'event': 'member_removed',
+        'tenant_id': tenant_id,
+        'removed_username': username,
+        'operator': me.username if me else None,
+    })
+    return {'id': user_id, 'username': username, 'deleted': True}, None
+
+
+def org_usage_detail(page=1, page_size=20):
+    """本租户问答流水（分页）。只返回**自己租户**的行。
+
+    🔴 分页参数一律先钳位再进 SQL：`page_size=10**9` 直接 offset 也能跑，
+    但那等于把整表捞出来 —— 是最好被利用的 DoS 入口之一。
+    """
+
+    tenant_id = _tenant_id()
+    if tenant_id is None:
+        return None
+
+    try:
+        page = int(page)
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        page_size = int(page_size)
+    except (TypeError, ValueError):
+        page_size = 20
+    page = max(1, page)
+    page_size = max(1, min(page_size, 100))
+
+    query = scoped(Usage, tenant_id)
+    total = query.count()
+    rows = (
+        query.order_by(Usage.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    pages = (total + page_size - 1) // page_size if total else 0
+
+    names = {
+        u.id: u.username for u in scoped(User, tenant_id).all()
+    }
+
+    return {
+        'items': [
+            {
+                'id': row.id,
+                'question': row.question,
+                'kb_id': row.kb_id,
+                'username': names.get(row.user_id),
+                'tokens': row.tokens,
+                'degraded': bool(row.degraded),
+                'created_at': row.created_at.strftime('%Y-%m-%d %H:%M:%S')
+                if row.created_at else None,
+            }
+            for row in rows
+        ],
+        'total': total,
+        'page': page,
+        'page_size': page_size,
+        'pages': pages,
+        'summary': usage_summary(tenant_id),
+        'quota': quota_status(tenant_id),
+    }
+
+
 # ============ 运营后台 ============
 def platform_tenants():
     """全部租户（仅平台管理员）。"""
@@ -192,6 +295,119 @@ def platform_usage_ranking(limit=10):
         }
         for i, sub in enumerate(rows)
     ]
+
+
+def platform_tenant_detail(tenant_id, days=7):
+    """单个租户的完整画像（仅平台管理员）。取不到返回 None。
+
+    🔴 这里**故意不用 scoped()** —— 平台管理员的职责就是跨租户，
+    它的越权由权限矩阵的 cross_tenant 显式授予（而不是靠"忘了过滤"）。
+    与之相对，企业后台那几个接口必须 scoped，两者不能混用一个函数。
+    """
+
+    tenant = db.session.get(Tenant, tenant_id)
+    if tenant is None:
+        return None
+
+    sub = Subscription.query.filter_by(tenant_id=tenant_id).first()
+    members = User.query.filter_by(tenant_id=tenant_id).order_by(User.id).all()
+    kbs = Kb.query.filter_by(tenant_id=tenant_id).order_by(Kb.id).all()
+
+    doc_counts = dict(
+        db.session.query(Document.kb_id, db.func.count(Document.id))
+        .filter(Document.tenant_id == tenant_id)
+        .group_by(Document.kb_id)
+        .all()
+    )
+
+    days = max(1, min(int(days or 7), 30))
+    today = datetime.date.today()
+    start_day = today - datetime.timedelta(days=days - 1)
+    start_dt = datetime.datetime.combine(start_day, datetime.time.min)
+
+    recent_rows = (
+        Usage.query.filter(
+            Usage.tenant_id == tenant_id,
+            Usage.created_at >= start_dt,
+        )
+        .order_by(Usage.id)
+        .all()
+    )
+
+    buckets = {
+        (start_day + datetime.timedelta(days=i)).strftime('%m-%d'):
+            {'total': 0, 'degraded': 0}
+        for i in range(days)
+    }
+    for row in recent_rows:
+        if row.created_at is None:
+            continue
+        key = row.created_at.strftime('%m-%d')
+        if key not in buckets:
+            continue
+        buckets[key]['total'] += 1
+        if row.degraded:
+            buckets[key]['degraded'] += 1
+
+    last_rows = (
+        Usage.query.filter_by(tenant_id=tenant_id)
+        .order_by(Usage.id.desc())
+        .limit(8)
+        .all()
+    )
+    names = {u.id: u.username for u in members}
+
+    quota_used = sub.quota_used if sub else 0
+    quota_total = sub.quota_total if sub else 0
+
+    return {
+        'id': tenant.id,
+        'name': tenant.name,
+        'slug': tenant.slug,
+        'created_at': tenant.created_at.strftime('%Y-%m-%d') if tenant.created_at else None,
+        'plan': sub.plan if sub else None,
+        'plan_name': PLANS.get(sub.plan, {}).get('name', sub.plan) if sub else '未订阅',
+        'quota_used': quota_used,
+        'quota_total': quota_total,
+        'quota_ratio': round(quota_used / quota_total * 100, 1) if quota_total else 0.0,
+        'usage': usage_summary(tenant_id),
+        'counts': {
+            'members': len(members),
+            'kbs': len(kbs),
+            'documents': sum(doc_counts.values()),
+        },
+        'members': [
+            {
+                'id': u.id,
+                'username': u.username,
+                'role': u.role,
+                'created_at': u.created_at.strftime('%Y-%m-%d') if u.created_at else None,
+            }
+            for u in members
+        ],
+        'kbs': [
+            {
+                'id': kb.id,
+                'name': kb.name,
+                'document_count': int(doc_counts.get(kb.id, 0)),
+            }
+            for kb in kbs
+        ],
+        'daily': [
+            {'date': key, **value} for key, value in buckets.items()
+        ],
+        'recent': [
+            {
+                'id': row.id,
+                'question': row.question,
+                'username': names.get(row.user_id),
+                'degraded': bool(row.degraded),
+                'created_at': row.created_at.strftime('%m-%d %H:%M')
+                if row.created_at else None,
+            }
+            for row in last_rows
+        ],
+    }
 
 
 def platform_change_plan(tenant_id, new_plan):
@@ -268,11 +484,40 @@ def register_admin_routes(app):
             return jsonify({'error': '用户不存在'}), 404
         return jsonify(result)
 
+    @app.delete('/api/org/members/<int:user_id>')
+    @login_required('manage_org_users')
+    def api_org_delete_member(user_id):
+        result, error = org_delete_member(user_id)
+        if error:
+            return jsonify({'error': error}), 400
+        if result is None:
+            return jsonify({'error': '用户不存在'}), 404
+        return jsonify(result)
+
+    @app.get('/api/org/usage')
+    @login_required('manage_org_users')
+    def api_org_usage():
+        data = org_usage_detail(
+            request.args.get('page', default=1, type=int),
+            request.args.get('page_size', default=20, type=int),
+        )
+        if data is None:
+            return jsonify({'error': '当前账号不属于任何租户'}), 403
+        return jsonify(data)
+
     # --- 运营后台 ---
     @app.get('/api/platform/tenants')
     @login_required('cross_tenant')
     def api_platform_tenants():
         return jsonify(platform_tenants())
+
+    @app.get('/api/platform/tenants/<int:tenant_id>')
+    @login_required('cross_tenant')
+    def api_platform_tenant_detail(tenant_id):
+        data = platform_tenant_detail(tenant_id)
+        if data is None:
+            return jsonify({'error': '租户不存在'}), 404
+        return jsonify(data)
 
     @app.get('/api/platform/usage-ranking')
     @login_required('cross_tenant')

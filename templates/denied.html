@@ -1,14 +1,66 @@
 {% extends "base.html" %}
 {% block title %}无权访问 · 企业知识库{% endblock %}
+{% block page_title %}无权访问{% endblock %}
+{% block page_sub %}当前角色进不了这个页面{% endblock %}
 
 {% block body %}
-<div class="card" style="max-width:520px;margin:60px auto;text-align:center;">
-  <h2 style="font-size:17px;color:var(--bad);">无权访问</h2>
-  <p class="muted" style="margin:12px 0 22px;">{{ message }}</p>
-  <a href="/kbs"><button class="primary">返回知识库</button></a>
+<div class="deny">
+  <div class="deny-icon">🔒</div>
+  <h2>无权访问</h2>
+  <p class="muted">{{ message }}</p>
+  <p class="tiny">当前账号：<span class="mono" id="deny-user">—</span> ·
+    角色：<span id="deny-role">—</span></p>
+  <div class="deny-acts">
+    <button class="btn primary" id="deny-back" type="button">返回</button>
+    <button class="btn" id="deny-me" type="button">我的账号</button>
+  </div>
 </div>
+<style>
+  .deny{
+    max-width:460px; margin:64px auto; text-align:center;
+    background:var(--panel); border:1px solid var(--line);
+    border-radius:var(--radius); box-shadow:var(--shadow); padding:34px 28px;
+  }
+  .deny .deny-icon{font-size:30px; line-height:1}
+  .deny h2{font-size:18px; margin:12px 0 10px}
+  .deny p{margin:0 0 8px; line-height:1.7}
+  .deny .deny-acts{display:flex; gap:10px; justify-content:center; margin-top:20px}
+  @media (max-width:640px){
+    .deny{margin:18px auto; padding:26px 18px}
+    .deny .deny-acts .btn{flex:1}
+  }
+</style>
 {% endblock %}
 
 {% block script %}
-<script>renderChrome(null);</script>
+<script>
+renderChrome(null);
+
+(async function initDeny() {
+  const back = document.getElementById('deny-back');
+  const me = document.getElementById('deny-me');
+  const userEl = document.getElementById('deny-user');
+  const roleEl = document.getElementById('deny-role');
+
+  let user = null;
+  try {
+    const me = await API.get('/api/auth/me');
+    user = me.ok ? me.data : null;
+  } catch (e) { user = null; }
+
+  if (user) {
+    userEl.textContent = user.username;
+    roleEl.textContent = ROLE_LABELS[user.role] || user.role;
+    // 平台管理员没有租户，回 /kbs 只会再撞一次门 —— 带去平台后台
+    const hasTenant = user.tenant_id !== null && user.tenant_id !== undefined;
+    back.textContent = hasTenant ? '返回知识库' : '返回平台后台';
+    back.addEventListener('click', () => { location.href = hasTenant ? '/kbs' : '/platform'; });
+  } else {
+    back.textContent = '去登录';
+    back.addEventListener('click', () => { location.href = '/login'; });
+  }
+
+  me.addEventListener('click', () => { location.href = '/me'; });
+})();
+</script>
 {% endblock %}

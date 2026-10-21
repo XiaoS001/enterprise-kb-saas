@@ -167,6 +167,35 @@ def authenticate(username, password):
     return user, None
 
 
+def change_password(user, old_password, new_password):
+    """改自己的密码。返回 error 文案，成功返回 None。
+
+    🔴 必须验原密码：会话被别人拿到时，不能让他直接把密码改掉把主人锁在外面。
+      （只认会话里的本人 —— 不存在「替别人改密码」的参数。）
+    """
+
+    if user is None:
+        return '请先登录'
+    if not old_password:
+        return '请输入原密码'
+    if not verify_password(old_password, user.password_hash):
+        return '原密码不正确'
+    if not new_password or len(new_password) < 6:
+        return '新密码至少 6 个字符'
+    if len(new_password) > 128:
+        return '新密码过长'
+    if verify_password(new_password, user.password_hash):
+        return '新密码不能与原密码相同'
+
+    user.password_hash = hash_password(new_password)
+    db.session.commit()
+    logger.info('password_changed', extra={
+        'event': 'password_changed',
+        'username': user.username,
+    })
+    return None
+
+
 # ============ 权限矩阵 ============
 # 能力名而不是路由路径：改路由时不会漏改鉴权。
 PERMISSIONS = {
@@ -328,5 +357,41 @@ def register_auth_routes(application):
             'tenant_id': user.tenant_id,
             'permissions': sorted(PERMISSIONS.get(user.role, set())),
         })
+
+    @application.get('/api/auth/profile')
+    @login_required()
+    def api_profile():
+        """个人中心用：自己的账号信息 + 租户名 + 权限明细。"""
+        from models import ROLE_LABELS, Tenant
+
+        user = current_user()
+        tenant = db.session.get(Tenant, user.tenant_id) if user.tenant_id else None
+        return jsonify({
+            'id': user.id,
+            'username': user.username,
+            'role': user.role,
+            'role_label': ROLE_LABELS.get(user.role, user.role),
+            'tenant_id': user.tenant_id,
+            'tenant_name': tenant.name if tenant else None,
+            'created_at': user.created_at.strftime('%Y-%m-%d %H:%M:%S')
+            if user.created_at else None,
+            'permissions': sorted(PERMISSIONS.get(user.role, set())),
+        })
+
+    @application.post('/api/auth/change-password')
+    @login_required()
+    def api_change_password():
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({'error': '缺少参数'}), 400
+
+        error = change_password(
+            current_user(),
+            payload.get('old_password'),
+            payload.get('new_password'),
+        )
+        if error:
+            return jsonify({'error': error}), 400
+        return jsonify({'status': 'ok'})
 
     return application

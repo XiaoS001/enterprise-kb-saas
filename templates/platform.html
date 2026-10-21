@@ -1,156 +1,157 @@
 {% extends "base.html" %}
-{% block title %}平台后台 · 企业知识库{% endblock %}
+{% block title %}平台后台{% endblock %}
+{% block page_title %}平台后台{% endblock %}
+{% block page_sub %}跨租户总览{% endblock %}
+
+{% block head %}
+<style>
+  .tenant-name{display:flex; align-items:center; gap:8px; flex-wrap:wrap}
+  .tenant-name b{font-weight:600}
+  .mini-bar{width:110px; height:6px; border-radius:99px; background:var(--line-2);
+    overflow:hidden; display:inline-block; vertical-align:middle}
+  .mini-bar i{display:block; height:100%; background:var(--brand); border-radius:99px}
+  .mini-bar.warn i{background:var(--warn)}
+  .mini-bar.bad i{background:var(--bad)}
+  .muted-mono{font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px;
+    color:var(--faint)}
+</style>
+{% endblock %}
 
 {% block body %}
-<div id="msg"></div>
+<div class="grid kpi" id="kpis" style="margin-bottom:14px"></div>
 
 <div class="card">
-  <h2>用量排行</h2>
-  <div id="ranking"><p class="empty">加载中…</p></div>
-</div>
-
-<div class="card">
-  <h2>全部租户</h2>
-  <div id="tenants"><p class="empty">加载中…</p></div>
-</div>
-
-<div class="card">
-  <h2>变更套餐</h2>
-  <p class="muted" style="margin-top:0;">
-    🔴 降级时如果已用量超过新额度，接口会返 <code>409</code> 并说明原因 ——
-    不会自动截断已用量（那等于凭空抹掉客户已消耗的额度）。
-  </p>
-  <div class="row" style="gap:10px;flex-wrap:wrap;margin-top:12px;">
-    <select id="plan-tenant" style="width:auto;min-width:180px;"></select>
-    <select id="plan-target" style="width:auto;min-width:140px;"></select>
-    <button class="primary" id="plan-apply">变更</button>
+  <div class="card-head">
+    <div>
+      <h2>租户</h2>
+      <div class="sub" id="tenant-sub">加载中…</div>
+    </div>
+    <div class="row">
+      <input class="input" id="filter" placeholder="按租户名筛选"
+             style="width:170px" autocomplete="off">
+    </div>
   </div>
-  <div id="plan-result" style="margin-top:14px;"></div>
+  <div id="msg"></div>
+  <div id="tenants"></div>
 </div>
 {% endblock %}
 
 {% block script %}
 <script>
-  const msgBox = document.getElementById('msg');
+(async () => {
+  const me = await renderChrome('/platform');
+  if (!me) { location.href = '/login'; return; }
+  await loadQuotaChip();
+
+  const msg = document.getElementById('msg');
+  const box = document.getElementById('tenants');
+  const filter = document.getElementById('filter');
+
   let tenants = [];
-  let plans = [];
+  let planNames = {};
 
-  function renderRanking(rows) {
-    const box = document.getElementById('ranking');
-    if (!rows.length) {
-      box.replaceChildren(el('p', { class: 'empty', text: '还没有用量数据' }));
-      return;
-    }
-    const max = Math.max(...rows.map(r => r.quota_used), 1);
-    box.replaceChildren(el('table', {},
-      el('thead', {}, el('tr', {},
-        el('th', { text: '# ' }), el('th', { text: '租户' }),
-        el('th', { text: '套餐' }), el('th', { text: '已用' }),
-        el('th', { text: '占比' }),
-      )),
-      el('tbody', {}, ...rows.map(r => {
-        const pct = Math.round(r.quota_used / max * 100);
-        const bar = el('div', { class: 'bar', style: 'width:120px;' },
-          el('i', { style: 'width:' + pct + '%;display:block;height:100%;'
-                             + 'background:var(--brand);' }));
-        return el('tr', {},
-          el('td', { class: 'muted', text: r.rank }),
-          el('td', { text: r.tenant_name }),
-          el('td', {}, el('span', { class: 'role-tag', text: r.plan })),
-          el('td', { text: r.quota_used + ' / ' + r.quota_total }),
-          el('td', {}, bar),
-        );
-      })),
-    ));
+  function renderKpis() {
+    const members = tenants.reduce((sum, t) => sum + (t.member_count || 0), 0);
+    const kbs = tenants.reduce((sum, t) => sum + (t.kb_count || 0), 0);
+    const used = tenants.reduce((sum, t) => sum + (t.quota_used || 0), 0);
+
+    document.getElementById('kpis').replaceChildren(
+      el('div', { class: 'kpi' },
+        el('div', { class: 'num', text: fmtNum(tenants.length) }),
+        el('div', { class: 'lbl', text: '租户' }),
+        el('div', { class: 'hint', text: '每一行数据都按 tenant_id 隔离' })),
+      el('div', { class: 'kpi' },
+        el('div', { class: 'num', text: fmtNum(members) }),
+        el('div', { class: 'lbl', text: '账号总数' }),
+        el('div', { class: 'hint', text: '含各角色' })),
+      el('div', { class: 'kpi' },
+        el('div', { class: 'num', text: fmtNum(kbs) }),
+        el('div', { class: 'lbl', text: '知识库' }),
+        el('div', { class: 'hint', text: '跨全部租户' })),
+      el('div', { class: 'kpi' },
+        el('div', { class: 'num', text: fmtNum(used) }),
+        el('div', { class: 'lbl', text: '已消耗额度' }),
+        el('div', { class: 'hint', text: '计费问答次数合计' })));
   }
 
-  function renderTenants(rows) {
-    const box = document.getElementById('tenants');
-    if (!rows.length) {
-      box.replaceChildren(el('p', { class: 'empty', text: '还没有租户' }));
+  function renderTable() {
+    const keyword = filter.value.trim().toLowerCase();
+    const items = keyword
+      ? tenants.filter(t => (t.name || '').toLowerCase().includes(keyword))
+      : tenants;
+
+    document.getElementById('tenant-sub').textContent = tenants.length
+      ? `${tenants.length} 个租户 · 点租户名看用量画像`
+      : '还没有租户';
+
+    if (!tenants.length) {
+      box.replaceChildren(emptyState('还没有租户',
+        '注册流程会创建第一个租户。',
+        el('a', { class: 'btn', href: '/login', text: '去注册页' })));
       return;
     }
-    box.replaceChildren(el('table', {},
-      el('thead', {}, el('tr', {},
-        el('th', { text: 'ID' }), el('th', { text: '名称' }),
-        el('th', { text: '套餐' }), el('th', { text: '已用 / 总额' }),
-        el('th', { text: '成员' }), el('th', { text: '知识库' }),
-      )),
-      el('tbody', {}, ...rows.map(t =>
-        el('tr', {},
-          el('td', { class: 'muted', text: t.id }),
-          el('td', { text: t.name }),
-          el('td', {}, el('span', { class: 'role-tag', text: t.plan || '—' })),
-          el('td', { text: (t.quota_used || 0) + ' / ' + (t.quota_total || 0) }),
-          el('td', { text: t.member_count }),
-          el('td', { text: t.kb_count }),
-        )
-      )),
-    ));
+    if (!items.length) {
+      box.replaceChildren(emptyState('没有匹配的租户', '换个关键词试试。'));
+      return;
+    }
 
-    // 填充下拉
-    const sel = document.getElementById('plan-tenant');
-    sel.replaceChildren(...rows.map(t =>
-      el('option', { value: t.id, text: '#' + t.id + ' ' + t.name
-                                            + '（' + (t.plan || '—') + '）' })));
+    const tbody = el('tbody');
+    for (const tenant of items) {
+      const ratio = pct(tenant.quota_used || 0, tenant.quota_total || 0);
+      const level = ratio >= 100 ? 'bad' : (ratio >= 80 ? 'warn' : '');
+
+      tbody.append(el('tr', {},
+        el('td', {},
+          el('div', { class: 'tenant-name' },
+            el('b', {}, el('a', { href: '/platform/tenants/' + tenant.id,
+              text: tenant.name })),
+            el('span', { class: 'muted-mono', text: tenant.slug || '' }))),
+        el('td', {}, el('span', { class: 'tag' + (tenant.plan ? ' brand' : ''),
+          text: planNames[tenant.plan] || tenant.plan || '未订阅' })),
+        el('td', { class: 'nowrap' },
+          el('span', { class: 'mini-bar ' + level },
+            el('i', { style: `width:${Math.min(100, ratio)}%` })),
+          el('span', { class: 'muted', style: 'margin-left:8px',
+            text: `${fmtNum(tenant.quota_used)} / ${fmtNum(tenant.quota_total)}` })),
+        el('td', { class: 'num' }, fmtNum(tenant.member_count)),
+        el('td', { class: 'num' }, fmtNum(tenant.kb_count)),
+        el('td', {},
+          el('a', { class: 'btn sm', href: '/platform/tenants/' + tenant.id,
+            text: '查看' }))));
+    }
+
+    box.replaceChildren(el('div', { class: 'table-wrap' },
+      el('table', { class: 'table' },
+        el('thead', {}, el('tr', {},
+          el('th', { text: '租户' }),
+          el('th', { text: '套餐' }),
+          el('th', { text: '额度' }),
+          el('th', { text: '账号', class: 'num' }),
+          el('th', { text: '知识库', class: 'num' }),
+          el('th', { text: '操作' }))),
+        tbody)));
   }
 
-  (async () => {
-    const me = await renderChrome('/platform');
-    if (!me) { location.href = '/login'; return; }
-
-    const [rank, list, planList] = await Promise.all([
-      API.get('/api/platform/usage-ranking'),
+  async function load() {
+    const [r, plansRes] = await Promise.all([
       API.get('/api/platform/tenants'),
       API.get('/api/platform/plans'),
     ]);
-
-    if (rank.ok) renderRanking(rank.data);
-    else showMsg(msgBox, 'err', (rank.data && rank.data.error) || '加载排行失败');
-
-    if (list.ok) { tenants = list.data; renderTenants(list.data); }
-    else showMsg(msgBox, 'err', (list.data && list.data.error) || '加载租户失败');
-
-    if (planList.ok) {
-      plans = planList.data;
-      document.getElementById('plan-target').replaceChildren(
-        ...plans.map(p => el('option', { value: p.plan,
-          text: p.name + '（' + p.quota_total + ' 次/月）' })));
+    if (!r.ok) {
+      showMsg(msg, 'bad', r.data.error || '租户加载失败');
+      box.replaceChildren();
+      return;
     }
-  })();
-
-  document.getElementById('plan-apply').addEventListener('click', async () => {
-    const tenantId = document.getElementById('plan-tenant').value;
-    const plan = document.getElementById('plan-target').value;
-    if (!tenantId || !plan) return;
-
-    const btn = document.getElementById('plan-apply');
-    btn.disabled = true;
-    const resultBox = document.getElementById('plan-result');
-    resultBox.replaceChildren();
-    try {
-      const r = await API.put('/api/platform/tenants/' + tenantId + '/plan', { plan });
-
-      if (r.ok) {
-        resultBox.replaceChildren(el('div', { class: 'msg ok',
-          text: '已变更：套餐 ' + r.data.plan + '，总额度 ' + r.data.quota_total
-                + '，已用 ' + r.data.quota_used }));
-        // 刷新列表
-        const list = await API.get('/api/platform/tenants');
-        if (list.ok) { tenants = list.data; renderTenants(list.data); }
-        const rank = await API.get('/api/platform/usage-ranking');
-        if (rank.ok) renderRanking(rank.data);
-      } else {
-        // 🔴 409 降级冲突要把后端那句话原样显示出来 ——
-        //    那才是让人理解「为什么不让降级」的关键
-        resultBox.replaceChildren(el('div', {
-          class: 'msg ' + (r.status === 409 ? 'warn' : 'err'),
-          text: (r.data && r.data.error) || ('变更失败（HTTP ' + r.status + '）'),
-        }));
-      }
-    } finally {
-      btn.disabled = false;
+    if (plansRes.ok) {
+      planNames = Object.fromEntries((plansRes.data || []).map(p => [p.plan, p.name]));
     }
-  });
+    tenants = r.data || [];
+    renderKpis();
+    renderTable();
+  }
+
+  filter.addEventListener('input', renderTable);
+  load();
+})();
 </script>
 {% endblock %}

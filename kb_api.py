@@ -14,7 +14,7 @@ import config
 from auth import current_user, current_tenant_id, fetch_scoped, login_required
 from billing import QuotaExceeded
 from chunking import build_document_chunks
-from kb_search import format_citations, search_documents
+from kb_search import format_citations, search_documents, tokenize
 from models import Document, Kb, db
 from tenancy import tenant_fields
 
@@ -75,14 +75,23 @@ def delete_kb(kb_id):
 
 
 # ============ 文档 ============
-def list_documents(kb_id):
-    """列出某库的文档分段。库不属于本租户 → None（404）。"""
+def list_documents(kb_id, with_tokens=False):
+    """列出某库的文档分段。库不属于本租户 → None（404）。
+
+    `with_tokens`：顺带算每段的**实际分词数**（与检索同一套 jieba + 停用词）。
+
+    🔴 默认关：分词是要花 CPU 的，一个大库几千段全切一遍纯属浪费 ——
+       只有「分段预览」这类真的要显示数字的页面才显式打开。
+    """
 
     kb = fetch_scoped(Kb, kb_id)
     if kb is None:
         return None
     rows = _documents_query(kb_id).order_by(Document.id).all()
-    return [_doc_json(d) for d in rows]
+    return [
+        _doc_json(d, token_count=len(tokenize(d.content)) if with_tokens else None)
+        for d in rows
+    ]
 
 
 def _documents_query(kb_id):
@@ -219,6 +228,7 @@ def ask_in_kb(kb_id, question, top_k=3, use_agent=False):
     answer = ''
     degraded = True
     degradation_reasons = []
+    fallback_used = False
 
     if use_agent:
         # 走agent（LangGraph 多智能体），它会自己再检索+生成+校验引用
@@ -226,12 +236,20 @@ def ask_in_kb(kb_id, question, top_k=3, use_agent=False):
         degraded = bool(degradation_reasons) or not answer
         if not answer and not degradation_reasons:
             degradation_reasons = ['agent 未产出可用答案']
+        if not answer:
+            # 模型挂了（没 key / 网络 / 模型下线）也别给一张空白页：
+            # 原因照实写进 degradation_reasons，正文退回检索原文。
+            answer = _fallback_answer(hits, _FALLBACK_MODEL_FAIL)
+            fallback_used = True
+            degradation_reasons.append('已改用规则兜底：返回检索原文，未经模型总结')
     else:
-        # 规则路径：只返回证据，不编造答案（没有模型就没有答案可给）。
-        # 这样「拿掉 key」时接口依然 200 + 有引用，且不会假装答了。
-        answer = ''
+        # 规则路径：没有模型就不"编"答案，但也不能给一张空白页 ——
+        # 把检索到的原文拼成结构化兜底回答，并明确标注未经模型总结。
+        # 「拿掉 key」时接口依然 200 + 有引用 + 页面可读，且不会假装答了。
+        answer = _fallback_answer(hits, _FALLBACK_NO_MODEL)
+        fallback_used = True
         degraded = True
-        degradation_reasons = ['未启用模型（use_agent=false 或未配置 API key），仅返回检索证据']
+        degradation_reasons = ['未启用模型（use_agent=false 或未配置 API key），已返回检索原文']
 
     # 🔴 计量：降级的问答**不扣额度**（没调模型 = 没消耗额度）
     usage = None
@@ -268,6 +286,7 @@ def ask_in_kb(kb_id, question, top_k=3, use_agent=False):
         'invalid_citations': [],
         'degraded': degraded,
         'degradation_reasons': degradation_reasons,
+        'fallback': fallback_used,
         'retrieved_count': len(hits),
         'evidence': evidence,
         'usage': {
@@ -284,6 +303,29 @@ _NO_KEY_ANSWER_MARKERS = (
     '未配置 API 密钥',
     '暂时无法回答',
 )
+
+
+# ---- 规则兜底答案 ----------------------------------------------------------
+#
+# 没有模型（或模型挂了）时，页面不能只剩一句「失败了」——
+# 把命中的原文按段落拼出来，标注清楚「未经模型总结」，用户照样能读到内容。
+#
+# 🔴 引用 token 必须是 `[doc:N]`（不是 `[doc:N#k]`）：前端 renderAnswer
+#    只认这个格式，认不出就只是死文本，「引用可点回原文」就断了。
+#    段号写进人话标题里，点回卡片时仍然精确到段。
+_FALLBACK_NO_MODEL = '【未启用模型，以下为知识库检索到的原文，未经模型总结】'
+_FALLBACK_MODEL_FAIL = '【模型没有给出答案，以下为知识库检索到的原文】'
+
+
+def _fallback_answer(hits, prefix):
+    """把命中的分段拼成结构化兜底答案（纯规则，不调模型）。"""
+
+    blocks = [
+        f"[doc:{hit['document_id']}] 《{hit['title']}》第 "
+        f"{hit['chunk_index'] + 1} 段\n{hit['content']}"
+        for hit in hits
+    ]
+    return prefix + '\n\n' + '\n\n'.join(blocks)
 
 
 def _ask_via_agent(question, evidence):
@@ -415,7 +457,7 @@ def _kb_json(kb):
     }
 
 
-def _doc_json(doc):
+def _doc_json(doc, token_count=None):
     return {
         'id': doc.id,
         'kb_id': doc.kb_id,
@@ -423,12 +465,33 @@ def _doc_json(doc):
         'chunk_index': doc.chunk_index,
         'content': doc.content,
         'created_at': doc.created_at.strftime('%Y-%m-%d %H:%M:%S') if doc.created_at else None,
+        # 参与检索打分的词数（jieba 切完、去掉停用词之后）。
+        # None = 本次没算（列表接口默认不算）
+        'token_count': token_count,
     }
 
 
 # ============ 路由注册 ============
 def register_kb_routes(application):
     """把知识库路由挂到 app 上。"""
+
+    @application.before_request
+    def _reject_tenantless_kb_call():
+        """🔴 没有租户的账号（平台管理员）调知识库接口 → 400，不是 500。
+
+        `list_kbs()` 里 `scoped(Kb, None)` 会抛 `TenantIsolationError`，
+        那是**隔离层的正确行为**（宁可不查也不能全库可见），但直接漏到
+        Flask 就是一个 500 + 堆栈。这里提前拦成一句人话。
+        """
+
+        if not request.path.startswith('/api/kbs'):
+            return None
+        user = current_user()
+        if user is None:
+            return None          # 没登录：交给 @login_required 出 401
+        if user.tenant_id is None:
+            return jsonify({'error': '当前账号不属于任何租户，无法使用知识库'}), 400
+        return None
 
     @application.get('/api/kbs')
     @login_required('view_history')
@@ -465,7 +528,8 @@ def register_kb_routes(application):
     @application.get('/api/kbs/<int:kb_id>/documents')
     @login_required('view_history')
     def api_list_documents(kb_id):
-        docs = list_documents(kb_id)
+        with_tokens = request.args.get('tokens') in ('1', 'true', 'yes')
+        docs = list_documents(kb_id, with_tokens=with_tokens)
         if docs is None:
             return jsonify({'error': '知识库不存在'}), 404
         return jsonify(docs)

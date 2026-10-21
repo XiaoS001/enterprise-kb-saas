@@ -23,8 +23,9 @@ python app.py
 # 3. 打开 http://127.0.0.1:5001
 ```
 
-**没有 API key 也能跑** —— 问答会走降级路径（只返回检索证据，不生成答案），
-且**不扣额度**。要完整效果就配 `DEEPSEEK_API_KEY`。
+**没有 API key 也能跑** —— 问答走规则兜底：不生成答案，而是把命中的原文
+按段落拼出来并标明「未经模型总结」，引用照样可点，且**不扣额度**。
+配上 `DEEPSEEK_API_KEY` 后，问答页可勾「用模型生成答案」走真模型（计费 1 次）。
 
 ### Docker
 
@@ -40,6 +41,18 @@ docker build -t rmb01 . && docker run -p 5001:5001 -v rmb01-data:/app/data rmb01
 python demo_seed.py      # 建演示租户 + 三档账号 + 灌示例文档，并真跑一遍问答链路
 python demo_citation.py  # 单独演示引用校验（含「故意引用不存在的文档」）
 ```
+
+> ⚠️ **这两个脚本都不写 `data/rmb01.db`。**
+> 它们在 `tempfile.mkdtemp()` 出来的临时目录里建库、跑完就丢 —— 目的是把链路
+> 完整跑一遍给你看，而不是给你准备登录数据。
+> 所以跑完 `demo_seed.py` 再去登录页输 `demo-admin / demo123456`，**会是「用户名或密码错误」**。
+>
+> 想在真实库里拿到演示账号，两条路：
+> 1. 登录页「注册新企业」自己建（推荐，最接近真实路径）；
+> 2. 直接拿库里已有的账号登录 —— 当前 `data/rmb01.db` 里就有 `演示公司` 一租户、
+>    `demo-admin / demo-member / demo-viewer / demo-platform` 四个账号，密码都是 `demo123456`。
+>
+> 这一条 2026-10-21 维护时核对过：`demo_seed.py` 自己的输出末尾也印着同一句提醒。
 
 ---
 
@@ -82,11 +95,12 @@ RMB01/
 ├── chunking.py         # 分段（两层级策略）
 ├── billing.py          # 🔴 计量 + 原子扣额度 + 套餐
 ├── admin_api.py        # 企业后台 + 运营后台 API
-├── pages.py            # 🔴 页面路由（4 个页面 + 服务端权限门控）
+├── retrieval_compare.py # 🔴 检索口径对比（线上/对照两套算法现场跑）
+├── pages.py            # 🔴 页面路由（10 个页面 + 服务端权限门控）
 ├── agent.py            # LangGraph 多智能体（源自 XM03）
 ├── skills/             # 可复用技能（引用校验/题目检索）
-├── templates/          # base/login/kbs/org/platform/denied（无框架无 CDN）
-├── tests/              # 287 条测试
+├── templates/          # 11 个模板：base + 登录/知识库/分段/问答/对比/企业/用量/平台/租户/个人/拒绝
+├── tests/              # 338 条测试
 ├── docs/               # API / 数据库 / 运维 / 计费规则 / 商业模式 / 截图说明
 │   └── screenshots/    # 4 张真实截图
 ├── run_mutations.py    # 🔴 17 个变异测试（CI 里真跑）
@@ -170,14 +184,24 @@ import 期固化的常量会让测试的 `monkeypatch.setenv` 失效
 
 修法两层：**疑问词进停用词表** + **词面覆盖率要求（查询实词至少命中一半）**。
 
-### 4.8 页面：4 个路由，不引框架与 CDN
+### 4.8 页面：10 个路由，不引框架与 CDN
 
 | 路由 | 谁能进 | 作用 |
 |---|---|---|
-| `/login` | 所有人 | 登录 / 注册新租户 |
-| `/kbs` | 已登录 | **核心页**：知识库列表 + 上传 + 问答 + 引用卡片 |
-| `/org` | 仅企业管理员 | 账单、额度、成员管理 |
-| `/platform` | 仅平台管理员 | 租户列表、用量排行、改套餐 |
+| `/login` | 所有人 | 登录 / 注册新租户；**演示账号一键填充** |
+| `/kbs` | 有租户的已登录用户 | 知识库列表 + 新建 + 额度条 + 站内筛选 |
+| `/kbs/<id>` | 同上 | 文档列表（按标题聚合）+ 上传 + **分段预览抽屉** |
+| `/kbs/<id>/ask` | 同上 | 单库问答：答案 + 引用材料并排，点 `[doc:N]` 跳证据 |
+| `/compare` | 同上 | **检索口径对比**：两套算法现场跑同一批探针，负样本看噪声 |
+| `/org` | 仅企业管理员 | 套餐/额度/成员：加成员、改角色、移除 |
+| `/org/usage` | 仅企业管理员 | 问答流水分页 + 计费/降级统计 |
+| `/platform` | 仅平台管理员 | 租户总览：额度、账号数、知识库数 |
+| `/platform/tenants/<id>` | 仅平台管理员 | 单租户画像：近 7 天柱状图、成员、知识库、最近提问、改套餐 |
+| `/me` | 已登录 | 个人中心：身份、权限清单、改密码 |
+
+页面统一用 `templates/base.html` 的一套设计语言：左侧固定导航 + 顶部面包屑 +
+卡片/表格/抽屉/Toast 组件；**没有框架、没有 CDN、没有构建步骤**，
+所有 CSS 内联在模板里，所有数据用 `textContent` 渲染（不拼 HTML 字符串）。
 
 🔴 **三条硬约束**（都是踩过坑才定的）：
 
@@ -191,12 +215,23 @@ import 期固化的常量会让测试的 `monkeypatch.setenv` 失效
 
 截图见 [`docs/截图说明.md`](docs/截图说明.md)（**4 张真实截图**，由 `make_screenshots.py` 驱动 Playwright 拍摄，每张都断言了元素真实渲染）。
 
+复跑截图（脚本**不造数据**，只拍对面已有数据）：
+
+```bash
+python app.py                                    # 演示库 data/rmb01.db
+venv\Scripts\python.exe make_screenshots.py      # 默认拍 127.0.0.1:5001
+RMB01_SHOT_BASE=http://127.0.0.1:5099 venv\Scripts\python.exe make_screenshots.py
+```
+
+拍之前脚本会自己探一遍（登得上 demo-admin / 有知识库 / 成员表 3 种角色 / 登得上 demo-platform），
+缺什么当场报错，不会拍到一半才发现空表。2026-10-21 这一轮按新 UI 重拍过 4 张。
+
 ---
 
 ## 五、测试
 
 ```bash
-pytest tests -q                      # 287 passed
+pytest tests -q                      # 338 passed
 pytest tests -q -m "not vector"      # CI 用法（向量测试会联网下载模型）
 python run_mutations.py              # 17 个变异，CI 里真跑
 ```
@@ -209,6 +244,7 @@ python run_mutations.py              # 17 个变异，CI 里真跑
 | 知识库接口 | 20 | 每个接口配跨租户测试 |
 | 引用校验 | 20 | 含格式对齐、零引用拦截、死循环防护 |
 | 问答链路 | 13 | 上传→问→引用；降级不 500 |
+| 兜底答案 | 4 | 无模型给原文、不扣额度、模型失败也兜底、成功不打兜底标 |
 | 分段与检索 | 12 | 含单文档库回归 |
 | 检索质量 | 11 | 停用词、相关性过滤、跨库隔离 |
 | 计费 | 20 | 原子扣减、账实相符、降级不扣 |
@@ -235,7 +271,9 @@ python run_mutations.py              # 17 个变异，CI 里真跑
 | `RMB01_DATABASE_URL` | `sqlite:///./data/rmb01.db` | 换 PostgreSQL 改这里 |
 | `RMB01_VECTOR_ENABLED` | **false** | 向量检索；开了要联网下 90MB 模型 |
 | `RMB01_BM25_RELATIVE_THRESHOLD` | 0.35 | 检索相关性阈值 |
-| `DEEPSEEK_API_KEY` | 空 | 留空 → 降级路径，**不扣额度** |
+| `DEEPSEEK_API_KEY` | 空 | 留空 → 规则兜底（返回检索原文，**不扣额度**）；配上 → 可勾「用模型生成答案」 |
+| `RMB01_AI_BASE_URL` | DeepSeek 官方 | 用魔搭就填 `https://api-inference.modelscope.cn/v1` |
+| `RMB01_AI_MODEL` | 见 `.env.example` | ⚠️ 魔搭账号**不一定**能跑 `deepseek-ai/*`（会报 `has no provider supported`，不是 key 错）；实测可用 `Qwen/Qwen3.8-27B` |
 | `RMB01_SECRET_KEY` | 随机 | 生产必配，否则重启后 session 全失效 |
 
 ⚠️ 未配 `RMB01_SECRET_KEY` 时启动会打警告并使用临时密钥
@@ -279,8 +317,8 @@ python run_mutations.py              # 17 个变异，CI 里真跑
 | **计费周期归零** | ❌ 未实现 | `quota_used` 只增不减，没有按月重置 |
 | **真实支付** | ❌ 未接入 | 只有套餐与计量，无支付网关 |
 | **邮件/短信通知** | ❌ 未实现 | 套餐表里写了但没做 |
-| **前端** | ✅ 4 个页面 | 登录 / 知识库 / 企业后台 / 平台后台，见 4.8 节 |
-| **演示截图** | ✅ 4 张 | 登录 / 知识库问答（含引用）/ 企业后台 / 平台后台，全部真实数据。复跑：`python make_screenshots.py` |
+| **前端** | ✅ 10 个页面 | 登录 / 知识库列表 / 分段预览 / 单库问答 / 检索对比 / 企业后台 / 用量明细 / 平台后台 / 租户详情 / 个人中心，见 4.8 节 |
+| **演示截图** | ✅ 4 张 | 登录 / 知识库问答（含引用）/ 企业后台 / 平台后台，全部真实数据，2026-10-21 按新 UI 重拍。复跑：`python make_screenshots.py`（脚本只读，不造数据） |
 | **PostgreSQL** | ❌ 未验证 | 代码支持但只在 SQLite 上跑过 |
 | **多语言** | ❌ 未支持 | 只有中文 |
 | **数据迁移** | ❌ 未做 | 用 `db.create_all()`，没有 Alembic |

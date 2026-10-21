@@ -11,7 +11,8 @@
                      这个方式稳得多，变异 9 最初就是因为块匹配失败而「注入无效」
 
 设计要点：
-  · 每个变异跑完立刻还原，不等下一轮开头清理
+  · 🔴 全部变异都在**临时工作区**（项目副本）里做，真实源码不动
+  · 每个变异跑完立刻还原副本里的文件，不等下一轮开头清理
   · 注入后自检「文件里真的有 MUTANT」，否则「0 条红」会被误读成覆盖不足
   · Windows 下 subprocess 必须显式 encoding='utf-8'
 """
@@ -30,6 +31,15 @@ AUTH = ROOT / 'auth.py'
 CITATION = ROOT / 'skills' / 'check_citation.py'
 BILLING = ROOT / 'billing.py'
 KB_API = ROOT / 'kb_api.py'
+
+# 复制到临时工作区时要跳过的东西：venv 太大，.git / backups / .shots 没用，
+# 数据库文件（*.db*）不带过去 —— 副本里让 app 自己建一个新的库，测试才干净。
+# 🔴 但 data/ 目录本身要复制：retriever 的语料就在 data/ 里，少一个文件
+#    就有 4 条 test_retriever 直接 FileNotFoundError，基线一开始就是红的。
+IGNORE = shutil.ignore_patterns(
+    '.git', 'venv', '.venv', '__pycache__', '.pytest_cache', '.shots',
+    'backups', '*.db', '*.db-wal', '*.db-shm',
+)
 
 SCOPED_LINE = '    return model.query.filter_by(tenant_id=tenant_id)'
 
@@ -167,11 +177,14 @@ MUTATIONS = [
 ]
 
 
-def run_tests():
+def run_tests(base=None):
+    """在工作区里跑 pytest。base 缺省是项目根（只在手动调试时用到）。"""
+
+    base = pathlib.Path(base or ROOT)
     env = dict(os.environ, PYTHONIOENCODING='utf-8')
     proc = subprocess.run(
         [sys.executable, '-m', 'pytest', 'tests', '-q', '-p', 'no:warnings'],
-        cwd=str(ROOT), capture_output=True, text=True,
+        cwd=str(base), capture_output=True, text=True,
         encoding='utf-8', errors='replace', env=env,
     )
     return (proc.stdout or '') + (proc.stderr or '')
@@ -244,8 +257,13 @@ def apply_mutation(spec):
     return True, original
 
 
-def run_one(spec, backup_dir):
+def run_one(spec, work):
     """跑单个变异。返回红数，或 None 表示变异无效。
+
+    🔴 只在**临时工作区**里改文件：`spec['file']` 在 main() 里已经被改写成
+    `<tmp>/xxx.py`，真实源码一个字节都不会动。所以这里不需要 backup_dir，
+    还原就是把原文写回同一个文件（而且下一次 run_one 之前的 mutation 也只在
+    临时目录里）。
 
     🔴 **三层自检**（第三层是审查建议补的）：
       1. 注入动作本身成功（模板匹配上了）
@@ -259,25 +277,26 @@ def run_one(spec, backup_dir):
     """
 
     path = spec['file']
-    pristine = backup_dir / path.name
-    shutil.copy(pristine, path)
-
     original_source = path.read_text(encoding='utf-8')
+
+    def restore():
+        path.write_text(original_source, encoding='utf-8')
+
     applied, _ = apply_mutation(spec)
     if not applied:
-        shutil.copy(pristine, path)
+        restore()
         return None
 
     mutated_source = path.read_text(encoding='utf-8')
 
     # 自检 2：标记在
     if 'MUTANT' not in mutated_source:
-        shutil.copy(pristine, path)
+        restore()
         return None
 
     # 自检 3a：源码真的变了
     if mutated_source == original_source:
-        shutil.copy(pristine, path)
+        restore()
         return None
 
     # 自检 3b：语法没被改坏（语法坏的变异跑出来全是 import error，
@@ -285,37 +304,62 @@ def run_one(spec, backup_dir):
     try:
         compile(mutated_source, str(path), 'exec')
     except SyntaxError:
-        shutil.copy(pristine, path)
+        restore()
         return None
 
-    output = run_tests()
-    red = count_red(output)
-
-    shutil.copy(pristine, path)
+    try:
+        output = run_tests(work)
+        red = count_red(output)
+    finally:
+        restore()
     return red
 
 
+def make_workspace():
+    """把项目复制到临时目录，变异只在副本上做。
+
+    🔴 这是审查意见里的重点：老版本直接改真实 `tenancy.py` / `billing.py`，
+    跑到一半 Ctrl-C 或进程被杀，仓库就留下一个带 MUTANT 的源文件 ——
+    下一次 `git status` 才发现，而且很容易被顺手提交。
+    复制副本之后再改，最坏情况也只是临时目录里有垃圾。
+    """
+
+    work = pathlib.Path(tempfile.mkdtemp(prefix='rmb01-mut-'))
+    shutil.copytree(ROOT, work, dirs_exist_ok=True, ignore=IGNORE)
+    # data/ 里是本机真实库，不复制；但 app 启动时不会自己建目录，
+    # 少了它 SQLite 直接 "unable to open database file"
+    (work / 'data').mkdir(parents=True, exist_ok=True)
+    return work
+
+
 def main():
-    backup_dir = pathlib.Path(tempfile.mkdtemp())
-    paths = sorted({m['file'] for m in MUTATIONS}, key=lambda p: p.name)
-    for p in paths:
-        shutil.copy(p, backup_dir / p.name)
-
-    baseline = run_tests()
-    base = count_passed(baseline)
-    print(f'基线: {base} passed')
-    if base == 0:
-        print('基线就没跑起来，先修基线再谈变异')
-        return 1
+    work = make_workspace()
+    keep = os.environ.get('RMB01_MUT_KEEP') == '1'
+    print(f'临时工作区: {work}')
+    print('（真实源码不会被修改；RMB01_MUT_KEEP=1 可保留临时目录）')
     print()
-    print('=' * 78)
-    print('变异测试 —— 租户隔离 / 引用校验 / 计费原子性')
-    print('=' * 78)
 
-    results = []
+    # 把 spec 里的绝对路径改指到副本上
+    specs = []
+    for spec in MUTATIONS:
+        rel = spec['file'].relative_to(ROOT)
+        specs.append({**spec, 'file': work / rel})
+
     try:
-        for spec in MUTATIONS:
-            red = run_one(spec, backup_dir)
+        baseline = run_tests(work)
+        base = count_passed(baseline)
+        print(f'基线: {base} passed')
+        if base == 0:
+            print('基线就没跑起来，先修基线再谈变异')
+            return 1
+        print()
+        print('=' * 78)
+        print('变异测试 —— 租户隔离 / 引用校验 / 计费原子性')
+        print('=' * 78)
+
+        results = []
+        for spec in specs:
+            red = run_one(spec, work)
             if red is None:
                 print(f'  {spec["name"]:<40} 注入无效')
                 results.append((spec['name'], 0, False))
@@ -324,14 +368,15 @@ def main():
             mark = 'OK' if ok else '不足'
             print(f'  {spec["name"]:<40} {red:>3} 红  (期望>={spec["expect_min_red"]})  {mark}')
             results.append((spec['name'], red, ok))
-    finally:
-        for p in paths:
-            shutil.copy(backup_dir / p.name, p)
-        shutil.rmtree(backup_dir, ignore_errors=True)
 
-    final = run_tests()
-    print()
-    print(f'还原后: {count_passed(final)} passed')
+        final = run_tests(work)
+        print()
+        print(f'还原后: {count_passed(final)} passed')
+    finally:
+        if keep:
+            print(f'保留临时目录: {work}')
+        else:
+            shutil.rmtree(work, ignore_errors=True)
 
     weak = [n for n, _, ok in results if not ok]
     if weak:

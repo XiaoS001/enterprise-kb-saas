@@ -18,6 +18,18 @@ config 本身在 **import 期**读取环境变量 —— 这是 Flask 应用的�
 import os
 from pathlib import Path
 
+# ---- 本地 .env（可选） ------------------------------------------------------
+# 用途：本机演示的密钥/模型端点不进代码、不进 git（.gitignore 已排除 .env）。
+# 规则：用 os.environ.setdefault —— 真环境变量永远优先于 .env 文件。
+_ENV_FILE = Path(__file__).resolve().parent / '.env'
+if _ENV_FILE.exists():
+    for _line in _ENV_FILE.read_text(encoding='utf-8').splitlines():
+        _line = _line.strip()
+        if not _line or _line.startswith('#') or '=' not in _line:
+            continue
+        _k, _, _v = _line.partition('=')
+        os.environ.setdefault(_k.strip(), _v.strip())
+
 
 def _env(name, default=''):
     value = os.environ.get(name)

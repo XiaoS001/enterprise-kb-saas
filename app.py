@@ -150,12 +150,14 @@ def _register_routes(application):
     from admin_api import register_admin_routes
     from auth import register_auth_routes
     from kb_api import register_kb_routes
+    from retrieval_compare import register_compare_routes
 
     register_auth_routes(application)
     register_kb_routes(application)
     from pages import register_page_routes
 
     register_admin_routes(application)
+    register_compare_routes(application)
     register_page_routes(application)
 
 

@@ -1,0 +1,286 @@
+{% extends "base.html" %}
+{% block title %}租户详情{% endblock %}
+{% block page_title %}租户详情{% endblock %}
+{% block page_sub %}用量画像与套餐{% endblock %}
+
+{% block head %}
+<style>
+  .chart{display:flex; align-items:flex-end; gap:8px; height:132px; padding:6px 2px 0}
+  .chart .col{flex:1; display:flex; flex-direction:column; justify-content:flex-end;
+    align-items:center; gap:4px; min-width:0; height:100%}
+  .chart .stack{width:100%; max-width:34px; display:flex; flex-direction:column;
+    justify-content:flex-end; border-radius:3px 3px 0 0; overflow:hidden;
+    background:var(--line-2); margin-top:auto}
+  .chart .seg-total{background:#bcd0f8}
+  .chart .seg-deg{background:#f1c40f}
+  .chart .cap{font-size:10.5px; color:var(--faint); white-space:nowrap}
+  .chart .val{font-size:10.5px; color:var(--muted); height:12px}
+  .legend{display:flex; gap:12px; font-size:11.5px; color:var(--muted);
+    margin-top:8px; flex-wrap:wrap}
+  .legend i{width:9px; height:9px; border-radius:2px; display:inline-block;
+    margin-right:4px; vertical-align:middle}
+  .q-cell{max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+</style>
+{% endblock %}
+
+{% block body %}
+<div class="card">
+  <div class="card-head">
+    <div style="min-width:0">
+      <h2 id="t-name">加载中…</h2>
+      <div class="sub" id="t-sub"></div>
+      <div class="chips" id="t-tags" style="margin-top:8px"></div>
+    </div>
+    <div class="row">
+      <a class="btn" href="/platform">返回列表</a>
+      <div class="field" style="margin:0">
+        <select class="select" id="plan-select" style="width:176px"></select>
+      </div>
+      <button class="btn primary" id="btn-plan">变更套餐</button>
+    </div>
+  </div>
+  <div id="msg"></div>
+</div>
+
+<div class="grid kpi" id="kpis" style="margin:14px 0"></div>
+
+<div class="card">
+  <div class="card-head" style="margin-bottom:6px">
+    <div>
+      <h2>近 7 天提问</h2>
+      <div class="sub">按天分桶，降级的不计费</div>
+    </div>
+  </div>
+  <div class="chart" id="chart"></div>
+  <div class="legend">
+    <span><i style="background:#bcd0f8"></i>全部提问</span>
+    <span><i style="background:#f1c40f"></i>其中降级</span>
+  </div>
+</div>
+
+<div class="grid two" style="margin-top:14px">
+  <div class="card">
+    <div class="card-head" style="margin-bottom:10px">
+      <div><h2>成员</h2><div class="sub" id="m-sub">—</div></div>
+    </div>
+    <div id="members"></div>
+  </div>
+  <div class="card">
+    <div class="card-head" style="margin-bottom:10px">
+      <div><h2>知识库</h2><div class="sub" id="k-sub">—</div></div>
+    </div>
+    <div id="kbs"></div>
+  </div>
+</div>
+
+<div class="card" style="margin-top:14px">
+  <div class="card-head" style="margin-bottom:10px">
+    <div><h2>最近提问</h2><div class="sub">最新的 8 条</div></div>
+  </div>
+  <div id="recent"></div>
+</div>
+{% endblock %}
+
+{% block script %}
+<script>
+(async () => {
+  const me = await renderChrome('/platform');
+  if (!me) { location.href = '/login'; return; }
+  await loadQuotaChip();
+
+  const TENANT_ID = {{ tenant_id }};
+  const msg = document.getElementById('msg');
+  const planSelect = document.getElementById('plan-select');
+  const btnPlan = document.getElementById('btn-plan');
+
+  let plans = [];
+  let current = null;
+
+  function renderHead(t) {
+    document.getElementById('t-name').textContent = t.name || '未命名租户';
+    document.title = (t.name || '租户') + ' · 平台后台';
+    document.getElementById('t-sub').textContent = t.slug || '';
+    document.getElementById('t-tags').replaceChildren(
+      el('span', { class: 'tag brand', text: t.plan_name || '未订阅' }),
+      el('span', { class: 'tag', text: '创建于 ' + fmtTime(t.created_at) }),
+      el('span', { class: 'tag', text: 'tenant_id = ' + t.id }));
+  }
+
+  function renderKpis(t) {
+    const ratio = t.quota_ratio || 0;
+    const usage = t.usage || {};
+
+    document.getElementById('kpis').replaceChildren(
+      el('div', { class: 'kpi' },
+        el('div', { class: 'num',
+          text: `${fmtNum(t.quota_used)} / ${fmtNum(t.quota_total)}` }),
+        el('div', { class: 'lbl', text: '额度' }),
+        el('div', { class: 'bar' + (ratio >= 100 ? ' bad' : (ratio >= 80 ? ' warn' : '')),
+          style: 'margin-top:9px' },
+          el('i', { style: `width:${Math.min(100, ratio)}%` }))),
+      el('div', { class: 'kpi' },
+        el('div', { class: 'num', text: fmtNum(t.counts.members) }),
+        el('div', { class: 'lbl', text: '成员' }),
+        el('div', { class: 'hint', text: '该租户的账号' })),
+      el('div', { class: 'kpi' },
+        el('div', { class: 'num', text: fmtNum(t.counts.kbs) }),
+        el('div', { class: 'lbl', text: '知识库' }),
+        el('div', { class: 'hint', text: fmtNum(t.counts.documents) + ' 段文档' })),
+      el('div', { class: 'kpi' },
+        el('div', { class: 'num', text: fmtNum(usage.total_queries || 0) }),
+        el('div', { class: 'lbl', text: '累计提问' }),
+        el('div', { class: 'hint', text: usage.degraded_queries
+          ? `降级 ${fmtNum(usage.degraded_queries)} 次`
+          : '没有降级回答' })));
+  }
+
+  function renderChart(daily) {
+    const chart = document.getElementById('chart');
+    const max = Math.max(1, ...daily.map(d => d.total));
+    // 用像素高度，别用百分比 —— 父级高度是算出来的，百分比在 flex 里会塌成 0
+    const PLOT = 86;
+    chart.replaceChildren(...daily.map(day => {
+      const totalH = day.total ? Math.max(6, Math.round((day.total / max) * PLOT)) : 2;
+      const degH = day.total ? Math.round((day.degraded / day.total) * totalH) : 0;
+      return el('div', { class: 'col' },
+        el('div', { class: 'val', text: day.total ? String(day.total) : '' }),
+        el('div', { class: 'stack', style: `height:${totalH}px` },
+          el('div', { class: 'seg-total', style: `height:${totalH - degH}px` }),
+          el('div', { class: 'seg-deg', style: `height:${degH}px` })),
+        el('div', { class: 'cap', text: day.date }));
+    }));
+  }
+
+  function renderMembers(t) {
+    document.getElementById('m-sub').textContent = `${t.members.length} 人`;
+    if (!t.members.length) {
+      document.getElementById('members').replaceChildren(
+        emptyState('没有成员', '这个租户还没有账号。'));
+      return;
+    }
+    const tbody = el('tbody');
+    for (const user of t.members) {
+      tbody.append(el('tr', {},
+        el('td', {}, el('div', { class: 'row' },
+          el('span', { class: 'avatar', text: (user.username || '?').slice(0, 1).toUpperCase() }),
+          el('b', { text: user.username }))),
+        el('td', {}, el('span', { class: 'tag',
+          text: ROLE_LABELS[user.role] || user.role })),
+        el('td', { class: 'muted nowrap' }, fmtTime(user.created_at))));
+    }
+    document.getElementById('members').replaceChildren(el('div', { class: 'table-wrap' },
+      el('table', { class: 'table' },
+        el('thead', {}, el('tr', {},
+          el('th', { text: '账号' }), el('th', { text: '角色' }), el('th', { text: '加入' }))),
+        tbody)));
+  }
+
+  function renderKbs(t) {
+    document.getElementById('k-sub').textContent = `${t.kbs.length} 个`;
+    if (!t.kbs.length) {
+      document.getElementById('kbs').replaceChildren(
+        emptyState('没有知识库', '这个租户还没建库。'));
+      return;
+    }
+    document.getElementById('kbs').replaceChildren(
+      el('div', {},
+        t.kbs.map(kb => el('div', { class: 'row spread',
+          style: 'padding:8px 0;border-bottom:1px solid var(--line-2)' },
+          el('div', { class: 'row' },
+            el('b', { text: kb.name }),
+            el('span', { class: 'tiny', text: '#kb' + kb.id })),
+          el('span', { class: 'tag', text: fmtNum(kb.document_count) + ' 段' })))));
+  }
+
+  function renderRecent(t) {
+    if (!t.recent.length) {
+      document.getElementById('recent').replaceChildren(
+        emptyState('还没有提问', '这个租户还没用过问答。'));
+      return;
+    }
+    const tbody = el('tbody');
+    for (const row of t.recent) {
+      tbody.append(el('tr', {},
+        el('td', { class: 'muted nowrap' }, fmtTime(row.created_at)),
+        el('td', { class: 'muted' }, row.username || '—'),
+        el('td', {}, el('div', { class: 'q-cell', text: row.question || '—' })),
+        el('td', {}, row.degraded
+          ? el('span', { class: 'tag warn', text: '降级' })
+          : el('span', { class: 'tag ok', text: '正常' }))));
+    }
+    document.getElementById('recent').replaceChildren(el('div', { class: 'table-wrap' },
+      el('table', { class: 'table' },
+        el('thead', {}, el('tr', {},
+          el('th', { text: '时间' }), el('th', { text: '账号' }),
+          el('th', { text: '问题' }), el('th', { text: '状态' }))),
+        tbody)));
+  }
+
+  function renderPlanPicker(t) {
+    if (!plans.length) {
+      planSelect.replaceChildren(el('option', { value: '', text: t.plan || '未订阅' }));
+      planSelect.disabled = true;
+      btnPlan.disabled = true;
+      return;
+    }
+    planSelect.replaceChildren(...plans.map(plan => el('option', {
+      value: plan.plan,
+      text: `${plan.name} · ${fmtNum(plan.quota_total)} 次`,
+      selected: plan.plan === t.plan ? '' : null,
+    })));
+  }
+
+  async function changePlan() {
+    const plan = planSelect.value;
+    if (!plan || !current || plan === current.plan) {
+      showMsg(msg, 'info', '套餐没有变化');
+      return;
+    }
+    const spec = plans.find(p => p.plan === plan);
+    const ok = await confirmAction('变更套餐',
+      `把「${current.name}」的套餐改成 ${spec ? spec.name : plan}？额度上限会立刻跟着变。`,
+      '确认变更');
+    if (!ok) { planSelect.value = current.plan || ''; return; }
+
+    btnPlan.disabled = true;
+    const r = await API.put('/api/platform/tenants/' + TENANT_ID + '/plan', { plan });
+    btnPlan.disabled = false;
+
+    if (!r.ok) {
+      planSelect.value = current.plan || '';
+      // 409 = 目标套餐额度低于已用量，服务端拒绝降级
+      showMsg(msg, 'bad', r.data.error || '变更失败');
+      return;
+    }
+    showMsg(msg, 'ok', `套餐已改为 ${r.data.plan}，额度上限 ${fmtNum(r.data.quota_total)}`);
+    load();
+  }
+
+  async function load() {
+    clearMsg(msg);
+    const [detailRes, plansRes] = await Promise.all([
+      API.get('/api/platform/tenants/' + TENANT_ID),
+      API.get('/api/platform/plans'),
+    ]);
+
+    if (!detailRes.ok) {
+      showMsg(msg, 'bad', detailRes.data.error || '租户不存在');
+      return;
+    }
+    plans = plansRes.ok ? (plansRes.data || []) : [];
+    current = detailRes.data;
+
+    renderHead(current);
+    renderKpis(current);
+    renderChart(current.daily || []);
+    renderMembers(current);
+    renderKbs(current);
+    renderRecent(current);
+    renderPlanPicker(current);
+  }
+
+  btnPlan.addEventListener('click', changePlan);
+  load();
+})();
+</script>
+{% endblock %}

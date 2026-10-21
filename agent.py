@@ -355,7 +355,13 @@ def _hydrate_documents(
     return hydrated, skill_counts, degradation_reasons
 
 
-def search_questions(query: str, top_k: int = TOP_K) -> list[dict]:
+def search_documents(query: str, top_k: int = TOP_K) -> list[dict]:
+    """按关键词检索**知识库文档**（不是题库）。
+
+    🔴 技能注册名仍是 "search_questions"（skills/search_questions.py），
+    这个名字出现在 skill_counts 里被测试断言，改名要连测试一起动 ——
+    所以只改这里的函数名，注册名保留。
+    """
     skill = registry.get("search_questions")
     return skill.run(query, top_k=top_k, strategy="hybrid")
 
@@ -485,7 +491,7 @@ def answerer_node(state: AgentState) -> dict[str, Any]:
     verdict = state.get("verdict")
 
     if not documents:
-        answer = "没有找到相关题目材料"
+        answer = "知识库里没有检索到相关内容，换个问法或先上传文档"
     else:
         api_key = app_config.api_key()
         if not api_key:
@@ -733,7 +739,7 @@ def run_agent(question: str, thread_id: str | None = None) -> dict[str, Any]:
     queries = list(dict.fromkeys(final_state.get("queries") or []))
     documents = final_state.get("documents") or []
     return {
-        "answer": final_state.get("answer") or "没有找到相关题目材料",
+        "answer": final_state.get("answer") or "知识库里没有检索到相关内容",
         "references": _public_references(documents),
         "queries_tried": queries,
         "attempts": final_state.get("attempts", 0),

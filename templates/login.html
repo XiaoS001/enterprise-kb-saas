@@ -1,122 +1,456 @@
-{% extends "base.html" %}
-{% block title %}登录 · 企业知识库{% endblock %}
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>登录 · 企业 AI 知识库</title>
+<style>
+  :root{
+    --bg:#f5f7fa; --panel:#fff; --line:#e4e8f0; --line-2:#eef1f6;
+    --text:#1b2230; --muted:#6b7688; --faint:#98a2b3;
+    --brand:#2563eb; --brand-soft:#eef3ff;
+    --bad:#c0392b; --bad-soft:#fdeceb;
+    --ok:#12805c; --ok-soft:#e6f6ef;
+    --radius:14px; --radius-sm:9px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;height:100%;overflow-x:hidden}
+  body{
+    background:var(--bg); color:var(--text);
+    font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",
+         "Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  a{color:var(--brand); text-decoration:none}
+  a:hover{text-decoration:underline}
 
-{% block body %}
-<div style="max-width:420px;margin:48px auto;">
+  .auth{display:flex; min-height:100vh}
+  /* ---------- 左：品牌 ---------- */
+  .aside{
+    flex:1 1 44%; min-width:0; padding:48px 44px; color:#fff;
+    background:
+      radial-gradient(900px 420px at 8% -10%, rgba(255,255,255,.16), transparent 60%),
+      radial-gradient(700px 500px at 110% 110%, rgba(56,189,248,.22), transparent 55%),
+      linear-gradient(150deg,#1d4ed8 0%,#1e3a8a 55%,#152a63 100%);
+    display:flex; flex-direction:column; justify-content:space-between; gap:32px;
+  }
+  .brand{display:flex; align-items:center; gap:11px}
+  .logo{
+    width:34px; height:34px; border-radius:10px; flex:0 0 34px;
+    background:rgba(255,255,255,.16); border:1px solid rgba(255,255,255,.28);
+    display:grid; place-items:center; font-weight:700; font-size:15px;
+  }
+  .brand b{font-size:15px; display:block; line-height:1.25}
+  .brand small{font-size:11.5px; opacity:.72}
+  .aside h1{
+    margin:0 0 12px; font-size:26px; line-height:1.35; font-weight:600;
+    letter-spacing:-.01em; max-width:15em;
+  }
+  .aside p{margin:0; font-size:13.5px; line-height:1.85; opacity:.82; max-width:26em}
+  .facts{display:flex; flex-direction:column; gap:11px; margin-top:26px}
+  .fact{display:flex; gap:10px; font-size:13px; opacity:.9; align-items:flex-start}
+  .fact .dot{
+    width:16px; height:16px; border-radius:50%; flex:0 0 16px; margin-top:2px;
+    background:rgba(255,255,255,.16); border:1px solid rgba(255,255,255,.3);
+    display:grid; place-items:center; font-size:9.5px;
+  }
+  .aside-foot{font-size:11.5px; opacity:.6; line-height:1.7}
 
-  <div class="card">
-    <h2 id="form-title">登录</h2>
-    <div id="msg"></div>
+  /* ---------- 右：表单 ---------- */
+  .panel{
+    flex:1 1 56%; min-width:0; display:flex; align-items:center;
+    justify-content:center; padding:40px 24px;
+  }
+  .panel-inner{width:100%; max-width:392px}
+  .tabs{
+    display:flex; gap:4px; background:#eef1f6; padding:3px; border-radius:10px;
+    margin-bottom:18px;
+  }
+  .tabs button{
+    flex:1; appearance:none; border:0; background:transparent; padding:7px 0;
+    font:inherit; font-size:13px; color:var(--muted); border-radius:8px;
+    cursor:pointer; font-weight:500;
+  }
+  .tabs button.on{background:#fff; color:var(--text); box-shadow:0 1px 2px rgba(16,24,40,.1)}
 
-    <form id="auth-form" autocomplete="on">
-      <div style="margin-bottom:14px;">
-        <label for="username">用户名</label>
-        <input type="text" id="username" name="username" required
-               autocomplete="username" placeholder="如 demo-admin">
+  .field{display:flex; flex-direction:column; gap:5px; margin-bottom:13px}
+  .field label{font-size:12.5px; color:var(--muted); font-weight:500}
+  .input{
+    width:100%; padding:9px 11px; border:1px solid var(--line);
+    border-radius:var(--radius-sm); font:inherit; font-size:13.5px;
+    background:#fff; color:var(--text); outline:none;
+  }
+  .input:focus{border-color:var(--brand); box-shadow:0 0 0 3px rgba(37,99,235,.13)}
+  .pwd-wrap{position:relative}
+  .pwd-wrap .input{padding-right:56px}
+  .pwd-toggle{
+    position:absolute; right:6px; top:50%; transform:translateY(-50%);
+    appearance:none; border:0; background:transparent; color:var(--muted);
+    font:inherit; font-size:12px; padding:4px 6px; cursor:pointer; border-radius:6px;
+  }
+  .pwd-toggle:hover{background:var(--bg); color:var(--text)}
+
+  .btn{
+    appearance:none; border:1px solid var(--line); background:#fff; color:var(--text);
+    padding:9px 14px; border-radius:var(--radius-sm); font:inherit; font-size:13.5px;
+    cursor:pointer; transition:background .15s;
+  }
+  .btn:hover{background:#f7f9fc}
+  .btn.primary{background:var(--brand); border-color:var(--brand); color:#fff; font-weight:500}
+  .btn.primary:hover{background:#1d4fd7}
+  .btn.block{width:100%}
+  .btn:disabled{opacity:.6; cursor:not-allowed}
+
+  .msg{
+    border-radius:var(--radius-sm); padding:9px 12px; font-size:13px;
+    margin-bottom:12px; border:1px solid transparent; line-height:1.6;
+  }
+  .msg:empty{display:none}
+  .msg.bad{background:var(--bad-soft); color:#96271c; border-color:#f5c6c1}
+  .msg.ok{background:var(--ok-soft); color:#0f6b4c; border-color:#bfe8d6}
+  .msg.info{background:var(--brand-soft); color:#1e40af; border-color:#c7d8fb}
+
+  /* ---------- 演示账号卡片 ---------- */
+  .demo{margin-top:22px; border-top:1px solid var(--line); padding-top:16px}
+  .demo-head{
+    display:flex; align-items:baseline; justify-content:space-between;
+    gap:10px; margin-bottom:9px;
+  }
+  .demo-head b{font-size:13px; font-weight:600}
+  .demo-head span{font-size:11.5px; color:var(--faint)}
+  .demo-grid{display:grid; grid-template-columns:1fr 1fr; gap:8px}
+  .demo-card{
+    text-align:left; appearance:none; cursor:pointer; font:inherit;
+    background:#fff; border:1px solid var(--line); border-radius:var(--radius-sm);
+    padding:9px 10px; display:flex; flex-direction:column; gap:4px;
+    transition:border-color .15s, background .15s, box-shadow .15s;
+    min-width:0;
+  }
+  .demo-card:hover{border-color:#b9cbf3; background:#fafcff}
+  .demo-card:focus-visible{outline:2px solid var(--brand); outline-offset:1px}
+  .demo-card.on{
+    border-color:var(--brand); background:var(--brand-soft);
+    box-shadow:0 0 0 3px rgba(37,99,235,.1);
+  }
+  .demo-card .u{
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    font-size:12.5px; font-weight:600; color:var(--text);
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .demo-card .r{font-size:11px; color:var(--brand); font-weight:500}
+  .demo-card .t{font-size:11px; color:var(--muted); line-height:1.5}
+  .chips{display:flex; gap:3px; flex-wrap:wrap; margin-top:1px}
+  .chip{
+    font-size:10px; padding:0 5px; border-radius:999px; line-height:1.7;
+    background:#f1f4f9; color:var(--muted); border:1px solid #e8ecf3;
+    white-space:nowrap;
+  }
+  .demo-foot{
+    font-size:11.5px; color:var(--faint); margin-top:9px; line-height:1.6;
+  }
+  .demo-foot code{
+    font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11px;
+    background:#f1f4f9; padding:1px 5px; border-radius:4px; color:#475569;
+  }
+  .hidden{display:none !important}
+
+  /* ---------- 窄屏 ---------- */
+  @media (max-width:880px){
+    .auth{flex-direction:column}
+    .aside{
+      flex:0 0 auto; padding:22px 20px; gap:14px;
+      border-radius:0 0 18px 18px;
+    }
+    .aside h1{font-size:19px; margin-bottom:6px; max-width:none}
+    .aside p{font-size:12.5px; line-height:1.7}
+    .facts,.aside-foot{display:none}
+    .panel{padding:20px 16px 34px; align-items:flex-start}
+    .panel-inner{max-width:none}
+  }
+  @media (max-width:400px){
+    .demo-grid{grid-template-columns:1fr}
+    .aside{padding:18px 16px}
+    .aside h1{font-size:17.5px}
+    .panel{padding:16px 13px 30px}
+    .brand small{display:none}
+  }
+</style>
+</head>
+<body>
+<div class="auth">
+  <section class="aside">
+    <div class="brand">
+      <span class="logo">知</span>
+      <span>
+        <b>企业 AI 知识库</b>
+        <small>RMB01 · 多租户 SaaS</small>
+      </span>
+    </div>
+
+    <div>
+      <h1>把公司文档变成<br>能被引用的答案</h1>
+      <p>上传即入库，提问带出处。答案里每个 <code>[doc:id]</code> 都能点回到原文那一段 —— 没有出处的答案不叫答案。</p>
+      <div class="facts">
+        <div class="fact"><span class="dot">1</span><span>按租户隔离，跨租户一律 404</span></div>
+        <div class="fact"><span class="dot">2</span><span>检索走词面覆盖率校验，检索不到就说检索不到</span></div>
+        <div class="fact"><span class="dot">3</span><span>额度原子扣减，降级回答不计费</span></div>
+      </div>
+    </div>
+
+    <div class="aside-foot">演示环境 · 数据每次重建 · 不要放真实资料</div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-inner">
+      <div class="tabs" role="tablist">
+        <button type="button" id="tab-login" class="on" role="tab">登录</button>
+        <button type="button" id="tab-register" role="tab">注册新企业</button>
       </div>
 
-      <div style="margin-bottom:14px;">
-        <label for="password">密码</label>
-        <input type="password" id="password" name="password" required
-               autocomplete="current-password" placeholder="至少 8 位">
-      </div>
+      <div id="msg" class="msg"></div>
 
-      {# 注册才填租户名；登录不需要 #}
-      <div id="tenant-row" class="hidden" style="margin-bottom:14px;">
-        <label for="tenant_name">公司 / 租户名</label>
-        <input type="text" id="tenant_name" name="tenant_name"
-               placeholder="如 演示公司">
-        <p class="muted" style="margin:6px 0 0;">
-          首次注册会创建新租户，你就是该租户的企业管理员。
-        </p>
-      </div>
+      <!-- 登录 -->
+      <form id="login-form" autocomplete="on">
+        <div class="field">
+          <label for="login-username">用户名</label>
+          <input class="input" id="login-username" name="username"
+                 autocomplete="username" required>
+        </div>
+        <div class="field">
+          <label for="login-password">密码</label>
+          <div class="pwd-wrap">
+            <input class="input" id="login-password" name="password" type="password"
+                   autocomplete="current-password" required>
+            <button type="button" class="pwd-toggle" id="login-pwd-toggle"
+                    aria-label="显示密码">显示</button>
+          </div>
+        </div>
+        <button class="btn primary block" type="submit" id="login-submit">登录</button>
+      </form>
 
-      <div class="row end" style="margin-top:18px;">
-        <button type="button" id="toggle-mode">注册新租户</button>
-        <button type="submit" class="primary" id="submit-btn">登录</button>
-      </div>
-    </form>
-  </div>
+      <!-- 注册 -->
+      <form id="register-form" class="hidden" autocomplete="off">
+        <div class="field">
+          <label for="reg-username">用户名</label>
+          <input class="input" id="reg-username" autocomplete="username"
+                 placeholder="至少 3 个字符" required>
+        </div>
+        <div class="field">
+          <label for="reg-password">密码</label>
+          <div class="pwd-wrap">
+            <input class="input" id="reg-password" type="password"
+                   autocomplete="new-password" placeholder="至少 6 个字符" required>
+            <button type="button" class="pwd-toggle" id="reg-pwd-toggle"
+                    aria-label="显示密码">显示</button>
+          </div>
+        </div>
+        <div class="field">
+          <label for="reg-tenant">企业名称</label>
+          <input class="input" id="reg-tenant" placeholder="例如：演示公司" required>
+        </div>
+        <button class="btn primary block" type="submit" id="reg-submit">创建企业并登录</button>
+      </form>
 
-  <p class="muted" style="text-align:center;">
-    演示账号：<code>demo-admin</code> / <code>demo123456</code>
-  </p>
+      <!-- 演示账号：只在登录模式下出现，注册模式不碰 -->
+      <div class="demo" id="demo-block">
+        <div class="demo-head">
+          <b>演示账号</b>
+          <span>点一张卡片，自动填入</span>
+        </div>
+        <div class="demo-grid" id="demo-grid">
+          {% for account in demo_accounts %}
+          <button type="button" class="demo-card"
+                  data-username="{{ account.username }}"
+                  data-password="{{ account.password }}"
+                  title="{{ account.scope }}｜{{ account.try_hint }}">
+            <span class="u">{{ account.username }}</span>
+            <span class="r">{{ account.role_label }}</span>
+            <span class="t">{{ account.try_hint }}</span>
+            <span class="chips">
+              {% for label in account.permission_labels %}
+              <span class="chip">{{ label }}</span>
+              {% endfor %}
+            </span>
+          </button>
+          {% endfor %}
+        </div>
+        <div class="demo-foot">
+          密码统一 <code>{{ demo_password }}</code>，填入后直接点「登录」。
+          四张卡片的差别只有权限 —— 逐一登录能看出门控是怎么生效的。
+        </div>
+      </div>
+    </div>
+  </section>
 </div>
-{% endblock %}
 
-{% block script %}
 <script>
-  const form = document.getElementById('auth-form');
   const msgBox = document.getElementById('msg');
-  const titleEl = document.getElementById('form-title');
-  const submitBtn = document.getElementById('submit-btn');
-  const toggleBtn = document.getElementById('toggle-mode');
-  const tenantRow = document.getElementById('tenant-row');
-  let mode = 'login';   // 'login' | 'register'
+  const loginForm = document.getElementById('login-form');
+  const registerForm = document.getElementById('register-form');
+  const demoBlock = document.getElementById('demo-block');
+  const usernameInput = document.getElementById('login-username');
+  const passwordInput = document.getElementById('login-password');
+  const pwdToggle = document.getElementById('login-pwd-toggle');
 
-  toggleBtn.addEventListener('click', () => {
-    mode = mode === 'login' ? 'register' : 'login';
-    const isRegister = mode === 'register';
-    titleEl.textContent = isRegister ? '注册新租户' : '登录';
-    submitBtn.textContent = isRegister ? '注册并登录' : '登录';
-    toggleBtn.textContent = isRegister ? '已有账号，去登录' : '注册新租户';
-    tenantRow.classList.toggle('hidden', !isRegister);
-    document.getElementById('tenant_name').required = isRegister;
-    clearMsg(msgBox);
+  function showMsg(kind, text) {
+    msgBox.className = 'msg ' + kind;
+    msgBox.textContent = text;
+  }
+  function clearMsg() {
+    msgBox.className = 'msg';
+    msgBox.textContent = '';
+  }
+
+  // 🔴 填入演示账号时必须把密码框恢复成 type=password ——
+  //    否则上一张卡片按下的「显示」会延续到下一张，密码明文留在屏幕上。
+  function setPasswordVisible(visible) {
+    passwordInput.type = visible ? 'text' : 'password';
+    pwdToggle.textContent = visible ? '隐藏' : '显示';
+    pwdToggle.setAttribute('aria-label', visible ? '隐藏密码' : '显示密码');
+  }
+
+  pwdToggle.addEventListener('click', () => {
+    setPasswordVisible(passwordInput.type === 'password');
+    passwordInput.focus();
   });
 
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    clearMsg(msgBox);
-    submitBtn.disabled = true;
+  function fillDemoAccount(card) {
+    // 注册模式下卡片是隐藏的；万一被键盘/脚本触发，先切回登录模式
+    if (registerForm.classList.contains('hidden') === false) {
+      switchMode('login');
+    }
+    clearMsg();
 
-    const username = document.getElementById('username').value.trim();
-    const password = document.getElementById('password').value;
+    usernameInput.value = card.dataset.username || '';
+    passwordInput.value = card.dataset.password || '';
+    setPasswordVisible(false);                 // 明文不外露
+    card.blur();                               // 不留焦点环，避免像被选中
 
+    document.querySelectorAll('.demo-card').forEach(node => {
+      node.classList.toggle('on', node === card);
+    });
+
+    showMsg('info', '已填入 ' + usernameInput.value + '，密码已带出，直接点「登录」即可。');
+    document.getElementById('login-submit').focus();
+  }
+
+  document.getElementById('demo-grid').addEventListener('click', (event) => {
+    const card = event.target.closest('.demo-card');
+    if (card) fillDemoAccount(card);
+  });
+
+  // ---------- 登录 / 注册切换 ----------
+  const tabLogin = document.getElementById('tab-login');
+  const tabRegister = document.getElementById('tab-register');
+
+  function switchMode(mode) {
+    const toLogin = mode === 'login';
+    loginForm.classList.toggle('hidden', !toLogin);
+    registerForm.classList.toggle('hidden', toLogin);
+    demoBlock.classList.toggle('hidden', !toLogin);   // 注册时不显示演示账号
+    tabLogin.classList.toggle('on', toLogin);
+    tabRegister.classList.toggle('on', !toLogin);
+    clearMsg();
+    (toLogin ? usernameInput : document.getElementById('reg-username')).focus();
+  }
+
+  tabLogin.addEventListener('click', () => switchMode('login'));
+  tabRegister.addEventListener('click', () => switchMode('register'));
+
+  document.getElementById('reg-pwd-toggle').addEventListener('click', (e) => {
+    const input = document.getElementById('reg-password');
+    const visible = input.type === 'password';
+    input.type = visible ? 'text' : 'password';
+    e.target.textContent = visible ? '隐藏' : '显示';
+    input.focus();
+  });
+
+  // ---------- 提交 ----------
+  async function postJson(url, payload) {
     try {
-      if (mode === 'register') {
-        const tenantName = document.getElementById('tenant_name').value.trim();
-        if (!tenantName) {
-          showMsg(msgBox, 'err', '请填写公司 / 租户名');
-          return;
-        }
-
-        // 1) 建租户
-        const t = await API.post('/api/tenants', { name: tenantName });
-        if (!t.ok) {
-          showMsg(msgBox, 'err', t.data && t.data.error ? t.data.error : '创建租户失败');
-          return;
-        }
-
-        // 2) 注册成该租户的企业管理员
-        const r = await API.post('/api/auth/register', {
-          username, password, role: 'org_admin', tenant_id: t.data.id,
-        });
-        if (!r.ok) {
-          showMsg(msgBox, 'err', r.data && r.data.error ? r.data.error : '注册失败');
-          return;
-        }
-      }
-
-      const login = await API.post('/api/auth/login', { username, password });
-      if (!login.ok) {
-        showMsg(msgBox, 'err', login.data && login.data.error
-          ? login.data.error : '用户名或密码错误');
-        return;
-      }
-
-      location.href = '/kbs';
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        credentials: 'same-origin',
+      });
+      let data = null;
+      try { data = await res.json(); } catch (err) { /* 空响应 */ }
+      return { ok: res.ok, status: res.status, data: data || {} };
     } catch (err) {
-      showMsg(msgBox, 'err', '网络错误：' + err.message);
-    } finally {
-      submitBtn.disabled = false;
+      return { ok: false, status: 0, data: { error: '网络异常，请确认服务还在运行' } };
+    }
+  }
+
+  loginForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    clearMsg();
+
+    const submit = document.getElementById('login-submit');
+    submit.disabled = true;
+    submit.textContent = '登录中…';
+
+    const result = await postJson('/api/auth/login', {
+      username: usernameInput.value.trim(),
+      password: passwordInput.value,
+    });
+
+    submit.disabled = false;
+    submit.textContent = '登录';
+
+    if (!result.ok) {
+      showMsg('bad', result.data.error || '登录失败');
+      return;
+    }
+    // 平台管理员没有租户，/kbs 会把他弹回来 —— 直接进平台后台
+    const hasTenant = result.data && result.data.tenant_id;
+    location.href = hasTenant ? '/kbs' : '/platform';
+  });
+
+  registerForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    clearMsg();
+
+    const submit = document.getElementById('reg-submit');
+    submit.disabled = true;
+    submit.textContent = '创建中…';
+
+    const result = await postJson('/api/auth/register', {
+      username: document.getElementById('reg-username').value.trim(),
+      password: document.getElementById('reg-password').value,
+      tenant_name: document.getElementById('reg-tenant').value.trim(),
+    });
+
+    submit.disabled = false;
+    submit.textContent = '创建企业并登录';
+
+    if (!result.ok) {
+      showMsg('bad', result.data.error || '注册失败');
+      return;
+    }
+
+    // 注册接口只建账号不建会话，顺手登录一次
+    const login = await postJson('/api/auth/login', {
+      username: document.getElementById('reg-username').value.trim(),
+      password: document.getElementById('reg-password').value,
+    });
+    if (login.ok) {
+      const hasTenant = login.data && login.data.tenant_id;
+      location.href = hasTenant ? '/kbs' : '/platform';
+    } else {
+      showMsg('ok', '企业已创建，请用刚才的账号登录。');
+      switchMode('login');
+      usernameInput.value = document.getElementById('reg-username').value.trim();
     }
   });
 
-  // 已登录就直接进知识库
-  (async () => {
-    const me = await API.get('/api/auth/me');
-    if (me.ok) location.href = '/kbs';
-  })();
+  // 支持 ?u=demo-admin 直接定位某张卡片
+  const preset = new URLSearchParams(location.search).get('u');
+  if (preset) {
+    const card = Array.from(document.querySelectorAll('.demo-card'))
+      .find(node => node.dataset.username === preset);
+    if (card) fillDemoAccount(card);
+  }
 </script>
-{% endblock %}
+</body>
+</html>
